@@ -4,15 +4,17 @@ import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChang
 import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
-  apiKey: process.env.REACT_APP_FIREBASE_API_KEY || 'test',
-  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN || 'test',
-  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID || 'test',
-  storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET || 'test',
-  messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID || 'test',
-  appId: process.env.REACT_APP_FIREBASE_APP_ID || 'test',
+  apiKey: "AIzaSyBjEFixKe1bgovoZovJZlzjanipdn6WRtE",
+  authDomain: "fitness-2e6c2.firebaseapp.com",
+  projectId: "fitness-2e6c2",
+  storageBucket: "fitness-2e6c2.firebasestorage.app",
+  messagingSenderId: "564661696727",
+  appId: "1:564661696727:web:159f9bff9dcb9907e61892",
 };
 
-let app, auth, db;
+let app, auth;
+// eslint-disable-next-line no-unused-vars
+let db;
 try {
   app = initializeApp(firebaseConfig);
   auth = getAuth(app);
@@ -58,20 +60,4 @@ export default function App() {
             color: 'white',
             border: 'none',
             borderRadius: '6px',
-            cursor: 'pointer'
-          }}
-        >
-          Sign in with Google
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ padding: '50px' }}>
-      <h1>Welcome {user.email}</h1>
-      <button onClick={() => signOut(auth)}>Sign out</button>
-      <p>Dashboard coming soon...</p>
-    </div>
-  );
-}
+            cursor:
