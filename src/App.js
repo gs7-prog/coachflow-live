@@ -150,67 +150,7 @@ function App() {
     }
   };
 
-  const handleRedeemInviteCode = async (currentUser) => {
-    if (!inviteCodeInput.trim()) {
-      setInviteCodeError('Please enter an invite code');
-      return;
-    }
 
-    if (!currentUser) {
-      setInviteCodeError('Not signed in. Please try again.');
-      return;
-    }
-
-    try {
-      setLoading(true);
-      setInviteCodeError('');
-
-      const refQ = query(collection(db, 'referrals'), where('referralCode', '==', inviteCodeInput.trim()));
-      const refDocs = await getDocs(refQ);
-
-      if (refDocs.docs.length === 0) {
-        setInviteCodeError('Invalid invite code. Please check and try again.');
-        setLoading(false);
-        return;
-      }
-
-      const referral = refDocs.docs[0].data();
-      const referralDocId = refDocs.docs[0].id;
-
-      if (referral.status !== 'pending') {
-        setInviteCodeError('This invite code has already been used.');
-        setLoading(false);
-        return;
-      }
-
-      await updateDoc(doc(db, 'clients', referral.clientId), {
-        userId: currentUser.uid
-      });
-
-      await updateDoc(doc(db, 'referrals', referralDocId), {
-        status: 'accepted',
-        acceptedAt: serverTimestamp()
-      });
-
-      await setDoc(doc(db, 'users', currentUser.uid), {
-        email: currentUser.email,
-        displayName: currentUser.displayName,
-        role: 'client',
-        createdAt: serverTimestamp()
-      });
-
-      setUserRole('client');
-      setShowInviteCodeInput(false);
-      setInviteCodeInput('');
-      setCurrentPage('dashboard');
-      await fetchClientData(currentUser.uid);
-    } catch (error) {
-      console.error('Error redeeming code:', error);
-      setInviteCodeError('An error occurred. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleAddClient = async (e) => {
     e.preventDefault();
