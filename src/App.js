@@ -112,20 +112,33 @@ function App() {
 
   const handleGoogleSignIn = async () => {
     try {
+      // SAVE referral code BEFORE opening popup (popup may change URL)
+      const refCodeBeforePopup = getReferralCodeFromUrl();
+      console.log('BEFORE POPUP - Referral code from URL:', refCodeBeforePopup);
+      if (refCodeBeforePopup) {
+        sessionStorage.setItem('referralCode', refCodeBeforePopup);
+        console.log('SAVED TO SESSION:', refCodeBeforePopup);
+      }
+      
       const result = await signInWithPopup(auth, googleProvider);
       const googleUser = result.user;
+
+      // RETRIEVE referral code from sessionStorage (in case URL changed)
+      const savedRefCode = sessionStorage.getItem('referralCode');
+      console.log('AFTER POPUP - Retrieved from session:', savedRefCode);
+      console.log('AFTER POPUP - Current URL:', window.location.pathname);
 
       const userDoc = await getDoc(doc(db, 'users', googleUser.uid));
       
       if (!userDoc.exists()) {
-        const currentRefCode = getReferralCodeFromUrl();
-        console.log('Current URL pathname:', window.location.pathname);
-        console.log('Detected referral code:', currentRefCode);
+        // Use saved code from sessionStorage
+        const currentRefCode = savedRefCode || getReferralCodeFromUrl();
+        console.log('FINAL DECISION - Using referral code:', currentRefCode);
         
         let role = 'coach';
         if (currentRefCode) {
           role = 'client';
-          console.log('Setting role as CLIENT');
+          console.log('SETTING ROLE AS CLIENT');
           
           const refQ = query(collection(db, 'referrals'), where('referralCode', '==', currentRefCode));
           const refDocs = await getDocs(refQ);
@@ -146,7 +159,7 @@ function App() {
             }
           }
         } else {
-          console.log('Setting role as COACH - no referral code found');
+          console.log('SETTING ROLE AS COACH - no referral code found');
         }
 
         await setDoc(doc(db, 'users', googleUser.uid), {
@@ -165,9 +178,12 @@ function App() {
           });
         }
 
-        console.log('User created with role:', role);
+        console.log('USER CREATED WITH ROLE:', role);
         setUserRole(role);
       }
+      
+      // CLEANUP
+      sessionStorage.removeItem('referralCode');
     } catch (error) {
       console.error('Sign in error:', error);
     }
