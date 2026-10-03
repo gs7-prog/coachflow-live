@@ -112,56 +112,73 @@ function App() {
 
   const handleGoogleSignIn = async () => {
     try {
-      // SAVE referral code BEFORE opening popup (popup may change URL)
       const refCodeBeforePopup = getReferralCodeFromUrl();
-      console.log('BEFORE POPUP - Referral code from URL:', refCodeBeforePopup);
+      console.log('STEP 1: BEFORE POPUP - Referral code from URL:', refCodeBeforePopup);
       if (refCodeBeforePopup) {
         sessionStorage.setItem('referralCode', refCodeBeforePopup);
-        console.log('SAVED TO SESSION:', refCodeBeforePopup);
+        console.log('STEP 2: SAVED TO SESSION:', refCodeBeforePopup);
       }
       
       const result = await signInWithPopup(auth, googleProvider);
       const googleUser = result.user;
+      console.log('STEP 3: SIGNED IN USER:', googleUser.email);
 
-      // RETRIEVE referral code from sessionStorage (in case URL changed)
       const savedRefCode = sessionStorage.getItem('referralCode');
-      console.log('AFTER POPUP - Retrieved from session:', savedRefCode);
-      console.log('AFTER POPUP - Current URL:', window.location.pathname);
+      console.log('STEP 4: AFTER POPUP - Retrieved from session:', savedRefCode);
+      console.log('STEP 5: AFTER POPUP - Current URL:', window.location.pathname);
 
       const userDoc = await getDoc(doc(db, 'users', googleUser.uid));
+      console.log('STEP 6: User exists in DB?', userDoc.exists());
       
       if (!userDoc.exists()) {
-        // Use saved code from sessionStorage
         const currentRefCode = savedRefCode || getReferralCodeFromUrl();
-        console.log('FINAL DECISION - Using referral code:', currentRefCode);
+        console.log('STEP 7: FINAL DECISION - Using referral code:', currentRefCode);
         
         let role = 'coach';
         if (currentRefCode) {
           role = 'client';
-          console.log('SETTING ROLE AS CLIENT');
+          console.log('STEP 8A: Setting role as CLIENT');
           
-          const refQ = query(collection(db, 'referrals'), where('referralCode', '==', currentRefCode));
-          const refDocs = await getDocs(refQ);
-          if (refDocs.docs.length > 0) {
-            const referral = refDocs.docs[0].data();
-            const coachDoc = await getDoc(doc(db, 'users', referral.coachId));
-            setCoachName(coachDoc.data().displayName);
+          try {
+            console.log('STEP 9: Querying Firestore for referral code:', currentRefCode);
+            const refQ = query(collection(db, 'referrals'), where('referralCode', '==', currentRefCode));
+            console.log('STEP 10: Query created, executing getDocs...');
+            const refDocs = await getDocs(refQ);
+            console.log('STEP 11: Query returned', refDocs.docs.length, 'documents');
+            
+            if (refDocs.docs.length > 0) {
+              console.log('STEP 12: Found referral document');
+              const referral = refDocs.docs[0].data();
+              console.log('STEP 13: Referral data:', referral);
+              
+              const coachDoc = await getDoc(doc(db, 'users', referral.coachId));
+              console.log('STEP 14: Got coach doc:', coachDoc.data());
+              setCoachName(coachDoc.data().displayName);
 
-            const clientDoc = await getDoc(doc(db, 'clients', referral.clientId));
-            if (clientDoc.exists()) {
-              await updateDoc(doc(db, 'clients', referral.clientId), {
-                userId: googleUser.uid
-              });
-              await updateDoc(doc(db, 'referrals', refDocs.docs[0].id), {
-                status: 'accepted',
-                acceptedAt: serverTimestamp()
-              });
+              const clientDoc = await getDoc(doc(db, 'clients', referral.clientId));
+              console.log('STEP 15: Client exists?', clientDoc.exists());
+              if (clientDoc.exists()) {
+                console.log('STEP 16: Updating client and referral...');
+                await updateDoc(doc(db, 'clients', referral.clientId), {
+                  userId: googleUser.uid
+                });
+                await updateDoc(doc(db, 'referrals', refDocs.docs[0].id), {
+                  status: 'accepted',
+                  acceptedAt: serverTimestamp()
+                });
+                console.log('STEP 17: Updated successfully');
+              }
+            } else {
+              console.log('STEP 12B: NO REFERRAL DOCUMENT FOUND FOR CODE:', currentRefCode);
             }
+          } catch (firestoreError) {
+            console.error('FIRESTORE ERROR:', firestoreError);
           }
         } else {
-          console.log('SETTING ROLE AS COACH - no referral code found');
+          console.log('STEP 8B: Setting role as COACH - no referral code found');
         }
 
+        console.log('STEP 18: Creating user doc with role:', role);
         await setDoc(doc(db, 'users', googleUser.uid), {
           email: googleUser.email,
           displayName: googleUser.displayName,
@@ -178,14 +195,13 @@ function App() {
           });
         }
 
-        console.log('USER CREATED WITH ROLE:', role);
+        console.log('STEP 19: USER CREATED WITH ROLE:', role);
         setUserRole(role);
       }
       
-      // CLEANUP
       sessionStorage.removeItem('referralCode');
     } catch (error) {
-      console.error('Sign in error:', error);
+      console.error('MAIN ERROR:', error);
     }
   };
 
