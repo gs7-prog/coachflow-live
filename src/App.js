@@ -323,10 +323,26 @@ function App() {
                     setLoading(true);
                     console.log('REDEEM: Step 1 - Code to redeem:', codeToRedeem);
                     
-                    // Find the referral BEFORE signing in
+                    // Sign in FIRST
+                    console.log('REDEEM: Step 2 - Signing in with Google');
+                    const result = await signInWithPopup(auth, googleProvider);
+                    const signedInUser = result.user;
+                    console.log('REDEEM: Step 3 - Signed in as:', signedInUser.email, 'UID:', signedInUser.uid);
+
+                    // Check if user already exists
+                    const existingUser = await getDoc(doc(db, 'users', signedInUser.uid));
+                    if (existingUser.exists()) {
+                      console.log('REDEEM: User already exists');
+                      setInviteCodeError('This account is already registered.');
+                      setLoading(false);
+                      return;
+                    }
+
+                    // NOW query the referral (after auth)
+                    console.log('REDEEM: Step 4 - Querying referral');
                     const refQ = query(collection(db, 'referrals'), where('referralCode', '==', codeToRedeem));
                     const refDocs = await getDocs(refQ);
-                    console.log('REDEEM: Step 2 - Found referral docs:', refDocs.docs.length);
+                    console.log('REDEEM: Step 5 - Found referral docs:', refDocs.docs.length);
 
                     if (refDocs.docs.length === 0) {
                       setInviteCodeError('Invalid invite code.');
@@ -336,7 +352,7 @@ function App() {
 
                     const referral = refDocs.docs[0].data();
                     const referralDocId = refDocs.docs[0].id;
-                    console.log('REDEEM: Step 3 - Referral status:', referral.status);
+                    console.log('REDEEM: Step 6 - Referral status:', referral.status);
 
                     if (referral.status !== 'pending') {
                       setInviteCodeError('This invite code has already been used.');
@@ -344,35 +360,21 @@ function App() {
                       return;
                     }
 
-                    // Now sign in
-                    console.log('REDEEM: Step 4 - Signing in with Google');
-                    const result = await signInWithPopup(auth, googleProvider);
-                    const signedInUser = result.user;
-                    console.log('REDEEM: Step 5 - Signed in as:', signedInUser.email, 'UID:', signedInUser.uid);
-
-                    // Check if user already exists
-                    const existingUser = await getDoc(doc(db, 'users', signedInUser.uid));
-                    if (existingUser.exists()) {
-                      setInviteCodeError('This account is already registered.');
-                      setLoading(false);
-                      return;
-                    }
-
                     // UPDATE client
-                    console.log('REDEEM: Step 6 - Updating client', referral.clientId);
+                    console.log('REDEEM: Step 7 - Updating client', referral.clientId);
                     await updateDoc(doc(db, 'clients', referral.clientId), {
                       userId: signedInUser.uid
                     });
 
                     // UPDATE referral
-                    console.log('REDEEM: Step 7 - Updating referral');
+                    console.log('REDEEM: Step 8 - Updating referral');
                     await updateDoc(doc(db, 'referrals', referralDocId), {
                       status: 'accepted',
                       acceptedAt: serverTimestamp()
                     });
 
                     // CREATE user with role CLIENT
-                    console.log('REDEEM: Step 8 - Creating user with role CLIENT');
+                    console.log('REDEEM: Step 9 - Creating user with role CLIENT');
                     await setDoc(doc(db, 'users', signedInUser.uid), {
                       email: signedInUser.email,
                       displayName: signedInUser.displayName,
@@ -380,7 +382,7 @@ function App() {
                       createdAt: serverTimestamp()
                     });
 
-                    console.log('REDEEM: Step 9 - SUCCESS - User created as CLIENT');
+                    console.log('REDEEM: Step 10 - SUCCESS - User created as CLIENT');
                     setUserRole('client');
                     setShowInviteCodeInput(false);
                     setInviteCodeInput('');
