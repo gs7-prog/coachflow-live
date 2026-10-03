@@ -22,12 +22,6 @@ const generateReferralCode = () => {
   return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 };
 
-const getReferralCodeFromUrl = () => {
-  const path = window.location.pathname;
-  const match = path.match(/\/referral\/([a-z0-9]+)/i);
-  return match ? match[1] : null;
-};
-
 function App() {
   const [user, setUser] = useState(null);
   const [userRole, setUserRole] = useState(null);
@@ -39,9 +33,11 @@ function App() {
   const [coachInfo, setCoachInfo] = useState(null);
   const [weeklyCheckIns, setWeeklyCheckIns] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [coachName, setCoachName] = useState("");
   
-  const referralCodeFromUrl = getReferralCodeFromUrl();
+  // Invite code flow state
+  const [showInviteCodeInput, setShowInviteCodeInput] = useState(false);
+  const [inviteCodeInput, setInviteCodeInput] = useState('');
+  const [inviteCodeError, setInviteCodeError] = useState('');
 
   const loadUserData = async (userId) => {
     try {
@@ -112,96 +108,30 @@ function App() {
 
   const handleGoogleSignIn = async () => {
     try {
-      const refCodeBeforePopup = getReferralCodeFromUrl();
-      console.log('STEP 1: BEFORE POPUP - Referral code from URL:', refCodeBeforePopup);
-      if (refCodeBeforePopup) {
-        sessionStorage.setItem('referralCode', refCodeBeforePopup);
-        console.log('STEP 2: SAVED TO SESSION:', refCodeBeforePopup);
-      }
-      
       const result = await signInWithPopup(auth, googleProvider);
       const googleUser = result.user;
-      console.log('STEP 3: SIGNED IN USER:', googleUser.email);
-
-      const savedRefCode = sessionStorage.getItem('referralCode');
-      console.log('STEP 4: AFTER POPUP - Retrieved from session:', savedRefCode);
-      console.log('STEP 5: AFTER POPUP - Current URL:', window.location.pathname);
 
       const userDoc = await getDoc(doc(db, 'users', googleUser.uid));
-      console.log('STEP 6: User exists in DB?', userDoc.exists());
       
       if (!userDoc.exists()) {
-        const currentRefCode = savedRefCode || getReferralCodeFromUrl();
-        console.log('STEP 7: FINAL DECISION - Using referral code:', currentRefCode);
-        
-        let role = 'coach';
-        if (currentRefCode) {
-          role = 'client';
-          console.log('STEP 8A: Setting role as CLIENT');
-          
-          try {
-            console.log('STEP 9: Querying Firestore for referral code:', currentRefCode);
-            const refQ = query(collection(db, 'referrals'), where('referralCode', '==', currentRefCode));
-            console.log('STEP 10: Query created, executing getDocs...');
-            const refDocs = await getDocs(refQ);
-            console.log('STEP 11: Query returned', refDocs.docs.length, 'documents');
-            
-            if (refDocs.docs.length > 0) {
-              console.log('STEP 12: Found referral document');
-              const referral = refDocs.docs[0].data();
-              console.log('STEP 13: Referral data:', referral);
-              
-              const coachDoc = await getDoc(doc(db, 'users', referral.coachId));
-              console.log('STEP 14: Got coach doc:', coachDoc.data());
-              setCoachName(coachDoc.data().displayName);
-
-              const clientDoc = await getDoc(doc(db, 'clients', referral.clientId));
-              console.log('STEP 15: Client exists?', clientDoc.exists());
-              if (clientDoc.exists()) {
-                console.log('STEP 16: Updating client and referral...');
-                await updateDoc(doc(db, 'clients', referral.clientId), {
-                  userId: googleUser.uid
-                });
-                await updateDoc(doc(db, 'referrals', refDocs.docs[0].id), {
-                  status: 'accepted',
-                  acceptedAt: serverTimestamp()
-                });
-                console.log('STEP 17: Updated successfully');
-              }
-            } else {
-              console.log('STEP 12B: NO REFERRAL DOCUMENT FOUND FOR CODE:', currentRefCode);
-            }
-          } catch (firestoreError) {
-            console.error('FIRESTORE ERROR:', firestoreError);
-          }
-        } else {
-          console.log('STEP 8B: Setting role as COACH - no referral code found');
-        }
-
-        console.log('STEP 18: Creating user doc with role:', role);
         await setDoc(doc(db, 'users', googleUser.uid), {
           email: googleUser.email,
           displayName: googleUser.displayName,
-          role,
+          role: 'coach',
           createdAt: serverTimestamp()
         });
 
-        if (role === 'coach') {
-          await setDoc(doc(db, 'coaches', googleUser.uid), {
-            userId: googleUser.uid,
-            name: googleUser.displayName,
-            email: googleUser.email,
-            createdAt: serverTimestamp()
-          });
-        }
+        await setDoc(doc(db, 'coaches', googleUser.uid), {
+          userId: googleUser.uid,
+          name: googleUser.displayName,
+          email: googleUser.email,
+          createdAt: serverTimestamp()
+        });
 
-        console.log('STEP 19: USER CREATED WITH ROLE:', role);
-        setUserRole(role);
+        setUserRole('coach');
       }
-      
-      sessionStorage.removeItem('referralCode');
     } catch (error) {
-      console.error('MAIN ERROR:', error);
+      console.error('Sign in error:', error);
     }
   };
 
@@ -213,8 +143,67 @@ function App() {
       setClients([]);
       setProfile(null);
       setCurrentPage('dashboard');
+      setShowInviteCodeInput(false);
+      setInviteCodeInput('');
     } catch (error) {
       console.error('Sign out error:', error);
+    }
+  };
+
+  const handleRedeemInviteCode = async () => {
+    if (!inviteCodeInput.trim()) {
+      setInviteCodeError('Please enter an invite code');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setInviteCodeError('');
+
+      const refQ = query(collection(db, 'referrals'), where('referralCode', '==', inviteCodeInput.trim()));
+      const refDocs = await getDocs(refQ);
+
+      if (refDocs.docs.length === 0) {
+        setInviteCodeError('Invalid invite code. Please check and try again.');
+        setLoading(false);
+        return;
+      }
+
+      const referral = refDocs.docs[0].data();
+      const referralDocId = refDocs.docs[0].id;
+
+      if (referral.status !== 'pending') {
+        setInviteCodeError('This invite code has already been used.');
+        setLoading(false);
+        return;
+      }
+
+      await updateDoc(doc(db, 'clients', referral.clientId), {
+        userId: user.uid
+      });
+
+      await updateDoc(doc(db, 'referrals', referralDocId), {
+        status: 'accepted',
+        acceptedAt: serverTimestamp()
+      });
+
+      await setDoc(doc(db, 'users', user.uid), {
+        email: user.email,
+        displayName: user.displayName,
+        role: 'client',
+        createdAt: serverTimestamp()
+      });
+
+      setUserRole('client');
+      setShowInviteCodeInput(false);
+      setInviteCodeInput('');
+      setCurrentPage('dashboard');
+      await fetchClientData(user.uid);
+    } catch (error) {
+      console.error('Error redeeming code:', error);
+      setInviteCodeError('An error occurred. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -237,19 +226,18 @@ function App() {
       });
 
       const refCode = generateReferralCode();
-      const refLink = `${window.location.origin}/referral/${refCode}`;
       
       await addDoc(collection(db, 'referrals'), {
         coachId: user.uid,
         clientId: clientRef.id,
         referralCode: refCode,
-        referralLink: refLink,
         status: 'pending',
         createdAt: serverTimestamp()
       });
 
       e.target.reset();
       fetchCoachData(user.uid);
+      setCurrentPage('dashboard');
     } catch (error) {
       console.error('Error adding client:', error);
     } finally {
@@ -335,34 +323,16 @@ function App() {
     }
   };
 
-  const getReferralLink = async (clientId) => {
+  const getReferralCode = async (clientId) => {
     try {
       const q = query(collection(db, 'referrals'), where('clientId', '==', clientId));
       const docs = await getDocs(q);
-      return docs.docs[0]?.data().referralLink || 'Not found';
+      return docs.docs[0]?.data().referralCode || 'Not found';
     } catch (error) {
-      console.error('Error getting referral link:', error);
+      console.error('Error getting referral code:', error);
       return 'Error';
     }
   };
-
-  if (referralCodeFromUrl && !user) {
-    return (
-      <div className="referral-page">
-        <div className="referral-card">
-          <div className="referral-icon">🏋️</div>
-          <h1>{coachName} invited you to CoachFlow</h1>
-          <p className="referral-subtitle">
-            CoachFlow is your personal fitness coaching platform. Your coach will guide you through your fitness journey with personalized insights and weekly check-ins.
-          </p>
-          <button className="referral-google-btn" onClick={handleGoogleSignIn}>
-            Sign in with Google
-          </button>
-          <p className="referral-footer">You'll be guided through a simple profile setup after signing in.</p>
-        </div>
-      </div>
-    );
-  }
 
   if (!user) {
     return (
@@ -373,6 +343,41 @@ function App() {
           <button className="google-btn" onClick={handleGoogleSignIn}>
             Sign in with Google
           </button>
+          <button 
+            className="btn-secondary" 
+            onClick={() => setShowInviteCodeInput(!showInviteCodeInput)}
+            style={{ marginTop: '20px' }}
+          >
+            I have an invite code
+          </button>
+          
+          {showInviteCodeInput && (
+            <div style={{ marginTop: '20px', padding: '20px', backgroundColor: '#f5f3f0', borderRadius: '8px' }}>
+              <h3>Enter Invite Code</h3>
+              <input
+                type="text"
+                placeholder="Enter your invite code"
+                value={inviteCodeInput}
+                onChange={(e) => {
+                  setInviteCodeInput(e.target.value);
+                  setInviteCodeError('');
+                }}
+                style={{ width: '100%', padding: '10px', marginBottom: '10px', borderRadius: '4px', border: '1px solid #ccc' }}
+              />
+              {inviteCodeError && <p style={{ color: 'red', marginBottom: '10px' }}>{inviteCodeError}</p>}
+              <button 
+                className="btn-primary"
+                onClick={() => {
+                  handleGoogleSignIn().then(() => {
+                    setTimeout(handleRedeemInviteCode, 1000);
+                  });
+                }}
+                disabled={loading}
+              >
+                {loading ? 'Processing...' : 'Sign In & Redeem'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -594,22 +599,29 @@ function App() {
 
               {selectedClient.status === 'pending' && (
                 <div className="pending-section">
-                  <h3>Waiting for client to accept invitation...</h3>
-                  <p>Share this link with your client:</p>
+                  <h3>Share this invite code with your client:</h3>
                   <div className="referral-link-box">
                     <input 
                       type="text" 
-                      value={`${window.location.origin}/referral/[code]`}
+                      id="inviteCodeDisplay"
+                      value=""
                       readOnly 
                     />
-                    <button className="btn-copy" onClick={async () => {
-                      const link = await getReferralLink(selectedClient.id);
-                      navigator.clipboard.writeText(link);
-                      alert('Link copied!');
-                    }}>
-                      Copy Link
+                    <button 
+                      className="btn-copy" 
+                      onClick={async () => {
+                        const code = await getReferralCode(selectedClient.id);
+                        document.getElementById('inviteCodeDisplay').value = code;
+                        navigator.clipboard.writeText(code);
+                        alert('Invite code copied: ' + code);
+                      }}
+                    >
+                      Get & Copy Code
                     </button>
                   </div>
+                  <p style={{ marginTop: '10px', fontSize: '14px', color: '#666' }}>
+                    Client should sign in and click "I have an invite code" to enter this code.
+                  </p>
                 </div>
               )}
 
