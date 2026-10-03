@@ -32,20 +32,26 @@ const getReferralCodeFromUrl = () => {
 
 function App() {
   const [user, setUser] = useState(null);
-  const [userRole, setUserRole] = useState(null);
-  const [currentPage, setCurrentPage] = useState("dashboard");
+  const [userRole, setUserRole] = useState(null); // "coach" or "client"
+  const [currentPage, setCurrentPage] = useState("dashboard"); // dashboard, client-detail, profile, checkin
   const [selectedClientId, setSelectedClientId] = useState(null);
   
+  // Coach data
   const [clients, setClients] = useState([]);
+  
+  // Client data
   const [profile, setProfile] = useState(null);
   const [coachInfo, setCoachInfo] = useState(null);
   const [weeklyCheckIns, setWeeklyCheckIns] = useState([]);
+  
+  // UI state
   const [loading, setLoading] = useState(false);
   const [coachName, setCoachName] = useState("");
   
   // Get referral code from URL on component mount
   const referralCodeFromUrl = getReferralCodeFromUrl();
 
+  // Load user data function
   const loadUserData = async (userId) => {
     try {
       const userDoc = await getDoc(doc(db, 'users', userId));
@@ -62,6 +68,7 @@ function App() {
     }
   };
 
+  // Auth listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
@@ -72,6 +79,8 @@ function App() {
     return unsubscribe;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+
 
   const fetchCoachData = async (coachId) => {
     try {
@@ -90,6 +99,7 @@ function App() {
         setProfile(profileDoc.data());
       }
 
+      // Find which coach this client belongs to
       const q = query(collection(db, 'referrals'), 
         where('clientId', '==', clientId),
         where('status', '==', 'accepted')
@@ -105,6 +115,7 @@ function App() {
         });
       }
 
+      // Fetch weekly check-ins
       const checkInQ = query(collection(db, 'weeklyCheckIns'), where('clientId', '==', clientId));
       const checkInDocs = await getDocs(checkInQ);
       setWeeklyCheckIns(checkInDocs.docs.map(doc => ({ id: doc.id, ...doc.data() })));
@@ -126,9 +137,12 @@ function App() {
         // First time user - determine role based on referral code
         // Check URL again after auth completes (in case it changed)
         const currentRefCode = getReferralCodeFromUrl();
+        console.log('Current URL pathname:', window.location.pathname);
+        console.log('Detected referral code:', currentRefCode);
         let role = 'coach';
         if (currentRefCode) {
           role = 'client';
+          console.log('Setting role as CLIENT');
           // Fetch coach name for display
           const refQ = query(collection(db, 'referrals'), where('referralCode', '==', currentRefCode));
           const refDocs = await getDocs(refQ);
@@ -150,7 +164,7 @@ function App() {
               }
             }
           }
-        
+        }
 
         // Create user doc
         await setDoc(doc(db, 'users', googleUser.uid), {
@@ -190,6 +204,7 @@ function App() {
     }
   };
 
+  // Coach: Add new client
   const handleAddClient = async (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
@@ -199,6 +214,7 @@ function App() {
 
     try {
       setLoading(true);
+      // Create client doc
       const clientRef = await addDoc(collection(db, 'clients'), {
         coachId: user.uid,
         userId: null,
@@ -208,14 +224,15 @@ function App() {
         createdAt: serverTimestamp()
       });
 
-      const refCode = generateReferralCode();
-      const refLink = `${window.location.origin}/referral/${refCode}`;
+      // Create referral
+      const referralCode = generateReferralCode();
+      const referralLink = `${window.location.origin}/referral/${referralCode}`;
       
       await addDoc(collection(db, 'referrals'), {
         coachId: user.uid,
         clientId: clientRef.id,
-        referralCode: refCode,
-        referralLink: refLink,
+        referralCode,
+        referralLink,
         status: 'pending',
         createdAt: serverTimestamp()
       });
@@ -229,6 +246,7 @@ function App() {
     }
   };
 
+  // Client: Save profile
   const handleSaveProfile = async (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
@@ -259,6 +277,7 @@ function App() {
     }
   };
 
+  // Client: Save weekly check-in
   const handleSaveWeeklyCheckIn = async (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
@@ -280,6 +299,7 @@ function App() {
         });
       }
 
+      // Find coach
       const refQ = query(collection(db, 'referrals'),
         where('clientId', '==', user.uid),
         where('status', '==', 'accepted')
@@ -307,6 +327,7 @@ function App() {
     }
   };
 
+  // Coach: Get referral link for client
   const getReferralLink = async (clientId) => {
     try {
       const q = query(collection(db, 'referrals'), where('clientId', '==', clientId));
@@ -318,6 +339,7 @@ function App() {
     }
   };
 
+  // Render referral landing page
   if (referralCodeFromUrl && !user) {
     return (
       <div className="referral-page">
@@ -336,6 +358,7 @@ function App() {
     );
   }
 
+  // Not logged in
   if (!user) {
     return (
       <div className="login-container">
@@ -350,6 +373,7 @@ function App() {
     );
   }
 
+  // Client: Profile setup
   if (userRole === 'client' && !profile && currentPage === 'dashboard') {
     return (
       <div className="client-container">
@@ -434,6 +458,7 @@ function App() {
     );
   }
 
+  // Coach dashboard
   if (userRole === 'coach') {
     const selectedClient = clients.find(c => c.id === selectedClientId);
 
@@ -606,6 +631,7 @@ function App() {
     );
   }
 
+  // Client dashboard
   if (userRole === 'client') {
     return (
       <div className="client-container">
