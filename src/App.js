@@ -150,9 +150,14 @@ function App() {
     }
   };
 
-  const handleRedeemInviteCode = async () => {
+  const handleRedeemInviteCode = async (currentUser) => {
     if (!inviteCodeInput.trim()) {
       setInviteCodeError('Please enter an invite code');
+      return;
+    }
+
+    if (!currentUser) {
+      setInviteCodeError('Not signed in. Please try again.');
       return;
     }
 
@@ -179,7 +184,7 @@ function App() {
       }
 
       await updateDoc(doc(db, 'clients', referral.clientId), {
-        userId: user.uid
+        userId: currentUser.uid
       });
 
       await updateDoc(doc(db, 'referrals', referralDocId), {
@@ -187,9 +192,9 @@ function App() {
         acceptedAt: serverTimestamp()
       });
 
-      await setDoc(doc(db, 'users', user.uid), {
-        email: user.email,
-        displayName: user.displayName,
+      await setDoc(doc(db, 'users', currentUser.uid), {
+        email: currentUser.email,
+        displayName: currentUser.displayName,
         role: 'client',
         createdAt: serverTimestamp()
       });
@@ -198,7 +203,7 @@ function App() {
       setShowInviteCodeInput(false);
       setInviteCodeInput('');
       setCurrentPage('dashboard');
-      await fetchClientData(user.uid);
+      await fetchClientData(currentUser.uid);
     } catch (error) {
       console.error('Error redeeming code:', error);
       setInviteCodeError('An error occurred. Please try again.');
@@ -367,10 +372,24 @@ function App() {
               {inviteCodeError && <p style={{ color: 'red', marginBottom: '10px' }}>{inviteCodeError}</p>}
               <button 
                 className="btn-primary"
-                onClick={() => {
-                  handleGoogleSignIn().then(() => {
-                    setTimeout(handleRedeemInviteCode, 1000);
-                  });
+                onClick={async () => {
+                  try {
+                    setLoading(true);
+                    const result = await signInWithPopup(auth, googleProvider);
+                    const signedInUser = result.user;
+                    
+                    const userDoc = await getDoc(doc(db, 'users', signedInUser.uid));
+                    if (!userDoc.exists()) {
+                      await handleRedeemInviteCode(signedInUser);
+                    } else {
+                      setInviteCodeError('This account is already registered.');
+                    }
+                  } catch (error) {
+                    console.error('Sign in error:', error);
+                    setInviteCodeError('Sign in failed. Please try again.');
+                  } finally {
+                    setLoading(false);
+                  }
                 }}
                 disabled={loading}
               >
