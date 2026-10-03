@@ -373,20 +373,81 @@ function App() {
               <button 
                 className="btn-primary"
                 onClick={async () => {
+                  const codeToRedeem = inviteCodeInput.trim();
+                  if (!codeToRedeem) {
+                    setInviteCodeError('Please enter an invite code');
+                    return;
+                  }
+
                   try {
                     setLoading(true);
+                    console.log('REDEEM: Step 1 - Code to redeem:', codeToRedeem);
+                    
+                    // Find the referral BEFORE signing in
+                    const refQ = query(collection(db, 'referrals'), where('referralCode', '==', codeToRedeem));
+                    const refDocs = await getDocs(refQ);
+                    console.log('REDEEM: Step 2 - Found referral docs:', refDocs.docs.length);
+
+                    if (refDocs.docs.length === 0) {
+                      setInviteCodeError('Invalid invite code.');
+                      setLoading(false);
+                      return;
+                    }
+
+                    const referral = refDocs.docs[0].data();
+                    const referralDocId = refDocs.docs[0].id;
+                    console.log('REDEEM: Step 3 - Referral status:', referral.status);
+
+                    if (referral.status !== 'pending') {
+                      setInviteCodeError('This invite code has already been used.');
+                      setLoading(false);
+                      return;
+                    }
+
+                    // Now sign in
+                    console.log('REDEEM: Step 4 - Signing in with Google');
                     const result = await signInWithPopup(auth, googleProvider);
                     const signedInUser = result.user;
-                    
-                    const userDoc = await getDoc(doc(db, 'users', signedInUser.uid));
-                    if (!userDoc.exists()) {
-                      await handleRedeemInviteCode(signedInUser);
-                    } else {
+                    console.log('REDEEM: Step 5 - Signed in as:', signedInUser.email, 'UID:', signedInUser.uid);
+
+                    // Check if user already exists
+                    const existingUser = await getDoc(doc(db, 'users', signedInUser.uid));
+                    if (existingUser.exists()) {
                       setInviteCodeError('This account is already registered.');
+                      setLoading(false);
+                      return;
                     }
+
+                    // UPDATE client
+                    console.log('REDEEM: Step 6 - Updating client', referral.clientId);
+                    await updateDoc(doc(db, 'clients', referral.clientId), {
+                      userId: signedInUser.uid
+                    });
+
+                    // UPDATE referral
+                    console.log('REDEEM: Step 7 - Updating referral');
+                    await updateDoc(doc(db, 'referrals', referralDocId), {
+                      status: 'accepted',
+                      acceptedAt: serverTimestamp()
+                    });
+
+                    // CREATE user with role CLIENT
+                    console.log('REDEEM: Step 8 - Creating user with role CLIENT');
+                    await setDoc(doc(db, 'users', signedInUser.uid), {
+                      email: signedInUser.email,
+                      displayName: signedInUser.displayName,
+                      role: 'client',
+                      createdAt: serverTimestamp()
+                    });
+
+                    console.log('REDEEM: Step 9 - SUCCESS - User created as CLIENT');
+                    setUserRole('client');
+                    setShowInviteCodeInput(false);
+                    setInviteCodeInput('');
+                    setCurrentPage('dashboard');
                   } catch (error) {
-                    console.error('Sign in error:', error);
-                    setInviteCodeError('Sign in failed. Please try again.');
+                    console.error('REDEEM: ERROR:', error);
+                    setInviteCodeError('An error occurred: ' + error.message);
                   } finally {
                     setLoading(false);
                   }
