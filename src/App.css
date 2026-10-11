@@ -989,6 +989,7 @@ textarea:focus-visible {
 
 .dashboard-view {
   max-width: 1280px;
+  margin: 0 auto;
 }
 
 /* ---- Dropdowns ---- */
@@ -2106,5 +2107,550 @@ textarea:focus-visible {
 
   .modal {
     padding: 22px;
+  }
+}
+
+/* =========================================================================
+   Calendar, clients bar, email preview, automations
+   ========================================================================= */
+
+/* ---- Clients bar: switcher sits on the same centre line as the top menu ---- */
+.clients-bar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+.clients-bar-left h2 {
+  font-size: 30px;
+  font-weight: 800;
+  margin-bottom: 6px;
+  letter-spacing: -0.01em;
+}
+
+.clients-bar-left p {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.clients-bar-right {
+  justify-self: end;
+}
+
+.clients-seg {
+  justify-self: center;
+}
+
+.seg {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.seg-count {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.seg-btn.active .seg-count {
+  background: rgba(255, 255, 255, 0.25);
+  color: inherit;
+}
+
+.view-hint {
+  color: var(--text-muted);
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+
+/* ---- Cards with an "add feedback" action underneath ---- */
+.card-wrap {
+  display: flex;
+  flex-direction: column;
+}
+
+.card-wrap .activity-card {
+  flex: 1;
+  border-radius: 18px 18px 0 0;
+}
+
+.card-wrap .activity-card:only-child {
+  border-radius: 18px;
+}
+
+.card-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  border: none;
+  border-radius: 0 0 18px 18px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.card-action:hover {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+/* ---- Completed programmes ---- */
+:root {
+  --blue-ink: #0b6ea8;
+}
+
+[data-theme='dark'] {
+  --blue-ink: #7fd0ff;
+}
+
+.level-completed { --level: var(--blue); --level-bg: var(--blue-soft); --level-ink: var(--blue-ink); }
+.level-pill.completed { background: var(--blue-soft); color: var(--blue-ink); }
+.level-dot.completed { background: var(--blue); }
+
+/* ---- Calendar ---- */
+.cal-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.cal-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.section .cal-title {
+  font-size: 20px;
+  font-weight: 800;
+  margin: 0 0 0 8px;
+}
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.cal-weekdays {
+  margin-bottom: 6px;
+}
+
+.cal-weekdays div {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-faint);
+  padding: 4px 8px;
+}
+
+.cal-cell {
+  min-height: 108px;
+  min-width: 0;
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cal-cell.muted {
+  opacity: 0.45;
+}
+
+.cal-cell.today {
+  box-shadow: inset 0 0 0 2px var(--primary);
+}
+
+.cal-day {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.cal-cell.today .cal-day {
+  color: var(--primary);
+}
+
+.cal-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 3px 6px;
+  border: none;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.cal-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cal-chip.email {
+  background: var(--blue-soft);
+  color: var(--blue-ink);
+}
+
+.cal-chip.done {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+
+.cal-chip.birthday {
+  background: var(--yellow-bg);
+  color: var(--yellow-ink);
+  cursor: default;
+}
+
+.cal-more {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.upcoming-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.upcoming-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: none;
+  border-radius: 14px;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.upcoming-item:hover {
+  background: var(--primary-soft);
+}
+
+.upcoming-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--primary-soft);
+  color: var(--primary);
+  flex-shrink: 0;
+}
+
+.upcoming-icon.email {
+  background: var(--blue-soft);
+  color: var(--blue-ink);
+}
+
+.upcoming-main {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---- Scheduling modal ---- */
+.modal.wide {
+  max-width: 760px;
+}
+
+.modal-actions-spread {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal-actions-group {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.form-row.three {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.meet-box {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 16px;
+  margin-bottom: 18px;
+  background: var(--panel);
+  border-radius: 14px;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.meet-ok {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--green-ink);
+}
+
+.meet-manual {
+  width: 100%;
+  margin-bottom: 0;
+}
+
+.form-group .check-row,
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 0;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.form-group .check-row {
+  padding-top: 10px;
+}
+
+.form-group .check-row input,
+.check-row input {
+  width: auto;
+  padding: 0;
+  border: none;
+  box-shadow: none;
+}
+
+.consent-row {
+  align-items: flex-start;
+  padding: 14px 16px;
+  margin-bottom: 18px;
+  background: var(--panel);
+  border-radius: 14px;
+}
+
+.email-section {
+  margin: 6px 0 18px;
+}
+
+.email-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 14px;
+}
+
+.email-tabs-spacer {
+  flex: 1;
+}
+
+.email-preview {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.email-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.email-meta > div {
+  display: flex;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.email-meta dt {
+  width: 64px;
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+
+.email-meta dd {
+  margin: 0;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.email-subject {
+  font-weight: 700;
+}
+
+.email-body {
+  padding: 18px 20px;
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.event-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.event-facts > div {
+  display: flex;
+  gap: 16px;
+  font-size: 14px;
+}
+
+.event-facts dt {
+  width: 130px;
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+
+.event-facts dd {
+  margin: 0;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.event-facts a {
+  color: var(--primary);
+}
+
+/* ---- Client page: actions and automations ---- */
+.client-page-header {
+  flex-wrap: wrap;
+}
+
+.client-page-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.client-page-actions .btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dob-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.dob-form .form-group {
+  margin-bottom: 0;
+}
+
+.automation-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.automation-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  background: var(--panel);
+  border-radius: 14px;
+}
+
+.automation-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--primary-soft);
+  color: var(--primary);
+  flex-shrink: 0;
+}
+
+.automation-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.automation-text strong {
+  font-size: 14px;
+}
+
+.automation-text small {
+  font-size: 12px;
+  color: var(--text-faint);
+  line-height: 1.4;
+}
+
+/* ---- Responsive additions ---- */
+@media (max-width: 1180px) {
+  .clients-bar {
+    grid-template-columns: 1fr auto;
+  }
+
+  .clients-seg {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
+
+@media (max-width: 700px) {
+  .clients-seg .seg-btn > span:not(.seg-count) {
+    display: none;
+  }
+
+  .cal-cell {
+    min-height: 72px;
+    padding: 4px;
+  }
+
+  .cal-chip span {
+    display: none;
+  }
+
+  .event-facts > div {
+    flex-direction: column;
+    gap: 2px;
   }
 }
