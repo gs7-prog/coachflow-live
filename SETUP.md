@@ -44,7 +44,9 @@ npm install firebase-admin
 
 Copy these into the root of your project (next to `package.json`):
 
-- `api/send-reminders.js`
+- `api/send-reminders.js` (the daily sender)
+- `api/send-invite-reminder.js` (sends an invitation reminder straight away)
+- `api/_lib.js` (shared code used by both; the underscore keeps it from becoming an endpoint)
 - `vercel.json` (if you already have one, merge the `crons` entry into it)
 
 ### 2.3 Resend
@@ -90,10 +92,22 @@ How sending works:
 
 ---
 
+### 2.7 The "Send reminder" button for pending invitations
+
+On a client who has not joined yet, **Send reminder** opens a preview of the email (with their invite code and the sign-in steps). You enter or confirm their email address and click **Send email now**. It uses the same Resend settings as above and goes out immediately, not with the daily run.
+
+- It only works on your deployed site. When you run the app locally with `npm start` there is no `/api`, so the button says so, and **Copy message** lets you paste the text into your own email or chat instead.
+- Limits, to prevent misuse: 5 reminders per client, at least 10 minutes apart, and 25 reminder emails per coach per day. The counters are kept on the client record and in a `rateLimits` collection that only the server writes to.
+- Only a signed-in coach can use it, and only for their own clients who have not joined yet.
+
+---
+
 ## 3. Using the new features
 
 - **Add feedback to calendar**: on any active client's page, on their card, or from the Calendar page. Pick Google Meet or email, check the previews, and add it. You get a reminder email and the client gets their email on the day.
 - **Automated messages** (client page): set the client's date of birth, then switch on birthday wishes, Christmas wishes or a partner introduction. You preview the email and confirm that the client agreed to receive it. The confirmation is saved on the client record.
+- **Client portal**: clients now get the same layout as coaches, with a language menu, dark mode, calendar of their sessions, chat (coming soon), Learning, contact admin and close account. Clients fill in their date of birth and gym on their profile, and the coach sees both on the client page. Birthday wishes use the client's own date of birth when they have entered one.
+- **Weekly check-in**: clients can save one day at a time or fill the whole week. A client counts as active from their most recent save, so a client who logs a day every few days stays green.
 - **Inactive** (no check-in for 30 days) and **Completed** appear as views on the Client List. Mark a programme completed from the client page.
 
 On consent: in the EU, marketing-style emails (such as the partner introductions) need the person's own agreement. The confirmation box records that you vouch for it, but the safest approach is to get the agreement from the client in writing (for example a chat message or form) and keep it.
@@ -109,7 +123,12 @@ The new collections are `calendarEvents`, `scheduledEmails`, `paymentMethods`, `
 ```
 match /calendarEvents/{id} {
   allow create: if request.auth != null && request.resource.data.coachId == request.auth.uid;
-  allow read, update, delete: if request.auth != null && resource.data.coachId == request.auth.uid;
+  // the coach, and the client the session is for, can read it
+  allow read: if request.auth != null && (
+    resource.data.coachId == request.auth.uid ||
+    get(/databases/$(database)/documents/clients/$(resource.data.clientId)).data.userId == request.auth.uid
+  );
+  allow update, delete: if request.auth != null && resource.data.coachId == request.auth.uid;
 }
 match /scheduledEmails/{id} {
   allow create: if request.auth != null && request.resource.data.coachId == request.auth.uid;
@@ -131,7 +150,7 @@ match /adminMessages/{id} {
 }
 ```
 
-The `clients`, `users`, `profiles` and `weeklyCheckIns` collections also need proper rules before real clients use the app. The server function reads everything through the Firebase Admin SDK, so these rules do not affect it.
+The `clients`, `users`, `profiles` and `weeklyCheckIns` collections also need proper rules before real clients use the app. Those rules have to match how the app queries them (for example, a coach reads check-ins by client, and a client writes their own), and a rule that does not match a query blocks it. Ask for a dedicated pass on these, and test each change on a copy of the data first. After changing any rule, check that a client can still see their calendar. The server function reads everything through the Firebase Admin SDK, so these rules do not affect it.
 
 ---
 
