@@ -73,7 +73,7 @@ const formatDate = (date) =>
 const getAccountStatus = (client) => (client.userId ? 'active' : 'pending');
 
 const getLastCheckInDate = (checkIns) => {
-  const times = checkIns.map((c) => toDate(c.createdAt)).filter(Boolean).map((d) => d.getTime());
+  const times = checkIns.map((c) => checkInDate(c)).filter(Boolean).map((d) => d.getTime());
   return times.length ? new Date(Math.max(...times)) : null;
 };
 
@@ -101,7 +101,7 @@ const getWeightPoints = (checkIns) => {
   checkIns.forEach((ci) => {
     (ci.days || []).forEach((d) => {
       if (d.weight > 0) {
-        points.push({ value: d.weight, label: `${formatDate(toDate(ci.createdAt))}, day ${d.day}` });
+        points.push({ value: d.weight, label: formatDate(dayDateOf(ci, d)) });
       }
     });
   });
@@ -498,7 +498,26 @@ const ICONS_EXTRA = {
       <path d="M12 8c-1-3-5-4-5-1.5S10 8 12 8zM12 8c1-3 5-4 5-1.5S14 8 12 8z" />
     </>
   ),
-  star: <path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9L12 3z" />
+  star: <path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9L12 3z" />,
+  book: (
+    <>
+      <path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2V5z" />
+      <path d="M19 17H6a2 2 0 0 0-2 2" />
+    </>
+  ),
+  cart: (
+    <>
+      <circle cx="9" cy="20" r="1.5" />
+      <circle cx="18" cy="20" r="1.5" />
+      <path d="M2 3h3l2.7 11.5a2 2 0 0 0 2 1.5h8.2a2 2 0 0 0 2-1.5L22 7H6" />
+    </>
+  ),
+  clock: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </>
+  )
 };
 
 // ---------------------------------------------------------------------------
@@ -826,6 +845,7 @@ const decorateClient = (c, clientData) => {
   return {
     ...c,
     email: data.email || c.email || '',
+    dateOfBirth: data.profile?.dateOfBirth || c.dateOfBirth || null,
     accountStatus: getAccountStatus(c),
     profile: data.profile,
     checkIns: data.checkIns,
@@ -1027,6 +1047,670 @@ function EmailPreview({ from, to, replyTo, sendOn, subject, body }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Client portal: check-ins, profile fields, invite reminder, Learning
+// ---------------------------------------------------------------------------
+const GYMS = ['MyFitness', 'Gym!', 'Sparta', 'Reval-Sport', 'HC Gym', 'Lemon Gym', '24-7 Fitness'];
+
+const CLIENT_NAV = [
+  { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
+  { id: 'checkin', label: 'Check-in', icon: 'check' },
+  { id: 'calendar', label: 'Calendar', icon: 'calendar' },
+  { id: 'learning', label: 'Learning', icon: 'book' },
+  { id: 'chat', label: 'Chat', icon: 'chat' }
+];
+
+// The moment a check-in was last worked on (days can now be saved one at a time)
+const checkInDate = (ci) => toDate(ci.updatedAt) || toDate(ci.createdAt);
+
+// Monday of the week containing the date, as YYYY-MM-DD
+const getWeekKey = (date) => {
+  const d = startOfDay(date);
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return toDateKey(d);
+};
+
+const isoWeekNumber = (date) => {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil(((d - yearStart) / DAY_MS + 1) / 7);
+};
+
+const blankDay = (day) => ({ day, weight: 0, meals: { breakfast: '', lunch: '', dinner: '', snacks: '' }, water: 0 });
+
+// Combines already-saved days with newly saved ones (always 7 entries, Monday to Sunday)
+const mergeDays = (existingDays, changes, savedAt) => {
+  const days = Array.from({ length: 7 }, (_, i) => (existingDays || []).find((d) => d.day === i + 1) || blankDay(i + 1));
+  changes.forEach((change) => {
+    days[change.day - 1] = { ...change, savedAt };
+  });
+  return days;
+};
+
+const dayHasData = (d) =>
+  !!d && (d.weight > 0 || d.water > 0 || Object.values(d.meals || {}).some((v) => v && String(v).trim()));
+
+// Finds this week's check-in, including older check-ins saved before weeks were tracked
+const findWeekDoc = (list, weekKey) =>
+  list.find((ci) => ci.weekKey === weekKey) ||
+  list.find((ci) => !ci.weekKey && toDate(ci.createdAt) && getWeekKey(toDate(ci.createdAt)) === weekKey) ||
+  null;
+
+// The calendar date a logged day belongs to
+const dayDateOf = (ci, d) =>
+  ci.weekKey ? parseDateKey(addDaysKey(ci.weekKey, (d.day || 1) - 1)) : checkInDate(ci);
+
+const dayLabel = (ci, d) => (ci.weekKey ? WEEKDAYS[(d.day || 1) - 1] : `Day ${d.day}`);
+
+const ageFromDob = (dob) => {
+  if (!dob) return null;
+  const birth = parseDateKey(dob);
+  const now = new Date();
+  let age = now.getFullYear() - birth.getFullYear();
+  if (now.getMonth() < birth.getMonth() || (now.getMonth() === birth.getMonth() && now.getDate() < birth.getDate())) {
+    age -= 1;
+  }
+  return age;
+};
+
+const buildInviteEmail = ({ coachName, clientName, code, appUrl }) => {
+  const cf = firstName(clientName);
+  const coachF = firstName(coachName);
+  return {
+    subject: `Coach ${coachF} is waiting for you on CoachFlow`,
+    body:
+      `Hey ${cf}, Coach ${coachF} here!\n\n` +
+      `A little while ago I invited you to CoachFlow, where we will track your progress and keep our feedback sessions on schedule. ` +
+      `It looks like you have not joined yet - it only takes a minute.\n\n` +
+      `How to join:\n` +
+      `1. Open ${appUrl}\n` +
+      `2. Click "I have an invite code" and enter your code\n` +
+      `3. Continue with Google and fill in your profile\n\n` +
+      `Your invite code: ${code}\n\n` +
+      `If anything is unclear, just reply to this email and I will help.\n\n` +
+      `Coach ${coachF}\n\n--\n` +
+      `You are receiving this because your coach ${coachName} invited you to CoachFlow.`
+  };
+};
+
+// ---- Profile form fields (used on first sign-up and when editing) ----
+function ProfileFields({ profile }) {
+  const savedGym = profile?.gym || '';
+  const initialChoice = profile?.gymChoice || (GYMS.includes(savedGym) ? savedGym : savedGym ? 'Other' : '');
+  const [gymChoice, setGymChoice] = useState(initialChoice);
+  const maxDob = (() => {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() - 18);
+    return toDateKey(d);
+  })();
+
+  return (
+    <>
+      <div className="form-row">
+        <div className="form-group">
+          <label>Date of birth</label>
+          <input type="date" name="dateOfBirth" defaultValue={profile?.dateOfBirth || ''} max={maxDob} required />
+        </div>
+        <div className="form-group">
+          <label>Sex</label>
+          <select name="sex" defaultValue={profile?.sex || ''} required>
+            <option value="">Select...</option>
+            <option value="M">Male</option>
+            <option value="F">Female</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="form-row">
+        <div className="form-group">
+          <label>Height (cm)</label>
+          <input type="number" name="height" defaultValue={profile?.height} min="100" max="250" required />
+        </div>
+        <div className="form-group">
+          <label>Current Weight (kg)</label>
+          <input type="number" name="weight" defaultValue={profile?.weight} step="0.1" required />
+        </div>
+      </div>
+
+      <div className="form-group">
+        <label>Target Weight (kg)</label>
+        <input type="number" name="targetWeight" defaultValue={profile?.targetWeight} step="0.1" required />
+      </div>
+
+      <div className="form-group">
+        <label>Activity Level</label>
+        <select name="activityLevel" defaultValue={profile?.activityLevel || ''} required>
+          <option value="">Select...</option>
+          <option value="sedentary">Sedentary (little exercise)</option>
+          <option value="light">Light (1-3 days/week)</option>
+          <option value="moderate">Moderate (3-5 days/week)</option>
+          <option value="active">Active (6-7 days/week)</option>
+          <option value="very active">Very Active (twice a day)</option>
+        </select>
+      </div>
+
+      <div className="form-row">
+        <div className="form-group">
+          <label>Daily Steps (average)</label>
+          <input type="number" name="steps" defaultValue={profile?.steps} min="0" required />
+        </div>
+        <div className="form-group">
+          <label>Daily Water (liters)</label>
+          <input type="number" name="water" defaultValue={profile?.water} step="0.5" min="0" required />
+        </div>
+      </div>
+
+      <div className="form-row">
+        <div className="form-group">
+          <label>Your gym (optional)</label>
+          <select name="gym" value={gymChoice} onChange={(e) => setGymChoice(e.target.value)}>
+            <option value="">Select your gym...</option>
+            {GYMS.map((g) => (
+              <option key={g} value={g}>{g}</option>
+            ))}
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        {gymChoice === 'Other' && (
+          <div className="form-group">
+            <label>Gym name</label>
+            <input
+              type="text"
+              name="gymOther"
+              defaultValue={initialChoice === 'Other' ? savedGym : ''}
+              maxLength={60}
+              placeholder="Type the name of your gym"
+              required
+            />
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Learning page
+// ---------------------------------------------------------------------------
+const SHOP_CATEGORIES = ['Protein', 'Carbs', 'Vegetables and fruit', 'Dairy and fats', 'Pantry and other'];
+
+const SHOP_SUGGESTIONS = {
+  Protein: ['Chicken breast', 'Eggs', 'Salmon', 'Lean mince', 'Tofu', 'Quark'],
+  Carbs: ['Oats', 'Rice', 'Quinoa', 'Potatoes', 'Wholegrain bread', 'Sweet potatoes'],
+  'Vegetables and fruit': ['Spinach', 'Broccoli', 'Peppers', 'Tomatoes', 'Berries', 'Bananas'],
+  'Dairy and fats': ['Skyr', 'Greek yoghurt', 'Olive oil', 'Nuts', 'Avocado', 'Feta'],
+  'Pantry and other': ['Canned beans', 'Canned tomatoes', 'Spices', 'Lemons', 'Garlic', 'Frozen veg']
+};
+
+const STARTER_LIST = [
+  ['Protein', 'Chicken breast'],
+  ['Protein', 'Eggs'],
+  ['Carbs', 'Oats'],
+  ['Carbs', 'Rice'],
+  ['Vegetables and fruit', 'Mixed vegetables'],
+  ['Vegetables and fruit', 'Berries'],
+  ['Dairy and fats', 'Skyr'],
+  ['Dairy and fats', 'Olive oil'],
+  ['Pantry and other', 'Canned beans']
+];
+
+const BATCH_STEPS = [
+  { title: 'Plan 3 to 4 meals', text: 'Pick two proteins, two carbs and three or four vegetables you like. Write the meals down before you shop so nothing is bought "just in case".' },
+  { title: 'Shop with a list', text: 'Use the shopping list above, grouped by category, so one trip covers the whole week.' },
+  { title: 'Start the slow things first', text: 'Put trays in the oven and grains on the hob first. While they cook, wash and chop vegetables and make sauces. Two hours on a quiet day is usually enough.' },
+  { title: 'Cook in parallel', text: 'Roast vegetables and chicken on separate trays, cook rice or quinoa on the hob, and use the waiting time to assemble breakfasts such as overnight oats.' },
+  { title: 'Cool quickly', text: 'Spread food in shallow containers so it cools fast. Aim to get it into the fridge or freezer within 2 hours of cooking.' },
+  { title: 'Portion and label', text: 'Divide into single meals and write the date on each box or bag. Eat the fresh ones first and freeze the rest straight away.' },
+  { title: 'Reheat until steaming hot', text: 'Heat food all the way through until it is steaming hot (about 75 degrees C). Only reheat leftovers once.' }
+];
+
+const FREEZES_WELL = [
+  'Cooked chicken and other cooked meat',
+  'Bolognese, chili, curries and meatballs',
+  'Soups and stews',
+  'Cooked beans and lentils',
+  'Cooked rice and quinoa, in single portions',
+  'Burger patties and marinated raw chicken',
+  'Pancakes, muffins and protein oat bars',
+  'Berries and peeled, sliced bananas',
+  'Blanched vegetables such as broccoli and green beans'
+];
+
+const FREEZES_BADLY = [
+  'Raw salad leaves, cucumber and radishes',
+  'Raw tomatoes (fine for sauces, not for slicing)',
+  'Boiled eggs (the white turns rubbery)',
+  'Mayonnaise or cream-based sauces (they can separate)',
+  'Potatoes inside soups and stews (they turn grainy)',
+  'Crispy or fried foods (they lose their crunch)'
+];
+
+const FRIDGE_LIFE = [
+  ['Cooked chicken, meat and mince dishes', '3 to 4 days'],
+  ['Cooked fish and seafood', 'up to 2 days'],
+  ['Soups, stews and chili', '3 to 4 days'],
+  ['Cooked beans and lentils', '3 to 4 days'],
+  ['Cooked rice (cool within 1 hour)', 'up to 1 day, or freeze'],
+  ['Hard-boiled eggs in the shell', 'up to 7 days'],
+  ['Overnight oats', 'up to 3 days'],
+  ['Washed, cut raw vegetables', '3 to 5 days']
+];
+
+const BASE_INGREDIENTS = {
+  chicken: {
+    label: 'Chicken',
+    prep: 'Roast or poach 1 kg of chicken breast or thighs with simple seasoning (salt, pepper, paprika, garlic). Slice or shred it and keep it plain so it can go in any direction.',
+    meals: [
+      { name: 'Burrito bowl', text: 'Chicken, rice, black beans, sweetcorn, salsa and a spoon of skyr instead of sour cream.' },
+      { name: 'Chicken wrap', text: 'Shredded chicken, crunchy salad, cucumber and a Greek yoghurt and mustard dressing in a wholegrain wrap.' },
+      { name: 'Chicken and vegetable soup', text: 'Simmer stock with carrots, celery, onion and lots of greens, then add the chicken at the end to warm through.' }
+    ]
+  },
+  quinoa: {
+    label: 'Quinoa',
+    prep: 'Rinse 400 g of dry quinoa and cook it in twice the volume of water for about 15 minutes, then fluff and spread it out to cool fast. Portion and freeze what you will not eat within a day.',
+    meals: [
+      { name: 'Mediterranean bowl', text: 'Quinoa, chickpeas, cucumber, tomato, olives, feta and lemon with olive oil.' },
+      { name: 'Breakfast porridge', text: 'Warm quinoa with milk, cinnamon and berries, topped with a spoon of nut butter.' },
+      { name: 'Stuffed peppers', text: 'Quinoa mixed with tomato, beans and spices, baked inside halved peppers with a little cheese on top.' }
+    ]
+  }
+};
+
+const MYTHS = [
+  {
+    myth: 'No carbs after 6 PM',
+    verdict: 'Myth',
+    science:
+      'Body weight follows your total intake over days and weeks, not the clock. When calories and food quality are the same, the time of day you eat carbohydrates has little independent effect for most people. Some people sleep better or train better with an evening carb source.',
+    action:
+      'Build dinner around protein, vegetables and a sensible portion of carbs. If late-evening snacking is the real habit, plan a satisfying dinner instead of banning a nutrient.'
+  },
+  {
+    myth: 'All fats are bad',
+    verdict: 'Myth',
+    science:
+      'Your body needs fat for hormones, for absorbing vitamins A, D, E and K, and for essential fatty acids. Swapping some saturated fat for unsaturated fat (olive and rapeseed oil, nuts, seeds, oily fish) is linked with better cholesterol levels. Industrially produced trans fats are the ones to avoid. Fat is also energy dense, so portions still matter.',
+    action: 'Cook with olive or rapeseed oil, add a handful of nuts or a few slices of avocado, and eat fish a couple of times a week.'
+  },
+  {
+    myth: 'Gluten-free is always healthier',
+    verdict: 'Myth',
+    science:
+      'Gluten-free food is essential for people with coeliac disease or a diagnosed gluten problem. For everyone else it is not healthier by default. Many gluten-free breads, biscuits and snacks contain less fibre and more sugar or fat to make up for the texture, and they cost more.',
+    action: 'Judge the product by its ingredients and fibre, not the label. Naturally gluten-free foods like potatoes, rice, vegetables, meat, fish and legumes are great.'
+  },
+  {
+    myth: 'Eating small meals often speeds up your metabolism',
+    verdict: 'Myth',
+    science:
+      'The energy your body uses to digest food depends on how much you eat in total, not on how many times you eat. Studies do not show a clear metabolic advantage of many small meals over fewer larger ones.',
+    action: 'Choose the pattern that keeps you full and fits your day, whether that is three meals or five.'
+  },
+  {
+    myth: 'Detox teas and juice cleanses flush out toxins',
+    verdict: 'Myth',
+    science:
+      'Your liver and kidneys already do this job around the clock. Cleanses usually mean very little food, and the quick drop on the scale is mostly water and gut contents that come straight back.',
+    action: 'Support your body with enough water, fibre-rich food, sleep and movement instead.'
+  }
+];
+
+const SUBSTITUTIONS = [
+  { type: 'Savoury', from: 'Creamy pasta sauce', to: 'Greek yoghurt or quark with parmesan, garlic and lemon zest', why: 'Creamy and tangy. Stir the yoghurt in off the heat so it does not split.' },
+  { type: 'Savoury', from: 'Sour cream on tacos or soup', to: 'Skyr or Greek yoghurt with a squeeze of lime', why: 'Same cool, tangy bite with more protein.' },
+  { type: 'Savoury', from: 'Mayo-heavy dressing or coleslaw', to: 'Greek yoghurt, mustard and lemon', why: 'Mustard and lemon bring the flavour that mayo usually carries.' },
+  { type: 'Savoury', from: 'Mashed potatoes', to: 'Half potato, half cauliflower or celeriac, with olive oil and skyr', why: 'Still smooth and buttery, with more vegetables in every spoon.' },
+  { type: 'Savoury', from: 'Burger and fries', to: 'Lean beef or turkey patty, wholegrain bun and oven wedges with smoked paprika', why: 'Smoky paprika and a good sauce keep it a proper burger night.' },
+  { type: 'Savoury', from: 'White pasta', to: 'Wholegrain or chickpea pasta, or half pasta and half courgetti', why: 'More fibre and protein, and a rich sauce keeps it comforting.' },
+  { type: 'Savoury', from: 'Takeaway pizza', to: 'Thin base, tomato sauce, plenty of vegetables, lean protein and a little strong cheese', why: 'A small amount of parmesan or chilli goes a long way.' },
+  { type: 'Savoury', from: 'Fried chicken', to: 'Oven-baked chicken in crushed oats or cornflakes with spices', why: 'The crunchy coating is still there, without the deep fryer.' },
+  { type: 'Sweet', from: 'Ice cream', to: 'Frozen banana and berries blended with yoghurt, or skyr with cocoa', why: 'Cold, creamy and sweet from the fruit.' },
+  { type: 'Sweet', from: 'Chocolate brownie', to: 'Black bean or sweet potato brownie with dark chocolate', why: 'Beans and sweet potato make it fudgy, dark chocolate keeps it rich.' },
+  { type: 'Sweet', from: 'Sugary cereal or granola', to: 'Plain oats or muesli with fruit, cinnamon and a little honey', why: 'You control the sweetness, and cinnamon makes it taste sweeter.' },
+  { type: 'Sweet', from: 'Fruit-flavoured yoghurt', to: 'Plain skyr or yoghurt with fresh or frozen fruit', why: 'Real fruit tastes brighter than flavouring.' },
+  { type: 'Snacks', from: 'Milk chocolate bar', to: 'A few squares of dark chocolate with nuts', why: 'Intense flavour means a small amount satisfies.' },
+  { type: 'Snacks', from: 'Crisps', to: 'Air-popped popcorn or oven-roasted chickpeas with paprika', why: 'Crunchy and salty with more fibre.' }
+];
+
+const SUB_FILTERS = ['All', 'Savoury', 'Sweet', 'Snacks'];
+
+const jumpTo = (id) => {
+  const el = document.getElementById(id);
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
+
+function LearningPage() {
+  const [items, setItems] = useState(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem('coachflow-shopping-list') || '[]');
+      return Array.isArray(saved) ? saved : [];
+    } catch (err) {
+      return [];
+    }
+  });
+  const [text, setText] = useState('');
+  const [category, setCategory] = useState(SHOP_CATEGORIES[0]);
+  const [copied, setCopied] = useState(false);
+  const [base, setBase] = useState('chicken');
+  const [subFilter, setSubFilter] = useState('All');
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('coachflow-shopping-list', JSON.stringify(items));
+    } catch (err) {
+      console.error('Could not save shopping list:', err);
+    }
+  }, [items]);
+
+  const addItem = (name, cat) => {
+    const clean = name.trim();
+    if (!clean) return;
+    setItems((prev) =>
+      prev.some((i) => i.text.toLowerCase() === clean.toLowerCase())
+        ? prev
+        : [...prev, { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, text: clean, category: cat, done: false }]
+    );
+  };
+
+  const handleAdd = (e) => {
+    e.preventDefault();
+    addItem(text, category);
+    setText('');
+  };
+
+  const loadStarter = () => STARTER_LIST.forEach(([cat, name]) => addItem(name, cat));
+
+  const buildNote = () => {
+    const open = items.filter((i) => !i.done);
+    const lines = ['Shopping list'];
+    SHOP_CATEGORIES.forEach((cat) => {
+      const group = open.filter((i) => i.category === cat);
+      if (group.length) {
+        lines.push('', cat);
+        group.forEach((i) => lines.push(`[ ] ${i.text}`));
+      }
+    });
+    return lines.join('\n');
+  };
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(buildNote());
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch (err) {
+      console.error('Copy failed:', err);
+    }
+  };
+
+  const baseData = BASE_INGREDIENTS[base];
+  const subs = SUBSTITUTIONS.filter((s) => subFilter === 'All' || s.type === subFilter);
+  const openCount = items.filter((i) => !i.done).length;
+
+  return (
+    <div className="learning-page">
+      <div className="page-header">
+        <h2>Learning</h2>
+        <p>Short, practical guides from your coach to make eating well easier.</p>
+      </div>
+
+      <div className="learn-nav" role="navigation" aria-label="Learning topics">
+        <button onClick={() => jumpTo('learn-shopping')}><Icon name="cart" size={16} /> Shopping list</button>
+        <button onClick={() => jumpTo('learn-batch')}><Icon name="clock" size={16} /> Time-saving guide</button>
+        <button onClick={() => jumpTo('learn-myths')}><Icon name="star" size={16} /> Myth buster</button>
+        <button onClick={() => jumpTo('learn-swaps')}><Icon name="grid" size={16} /> Substitution chart</button>
+      </div>
+
+      {/* ---- Block 1: shopping list and template ---- */}
+      <section className="section learn-block" id="learn-shopping">
+        <div className="learn-head">
+          <span className="learn-icon"><Icon name="cart" size={22} /></span>
+          <div>
+            <h3>Shopping List and Template</h3>
+            <p className="section-subtitle section-subtitle-tight">A simple plan for the week, and a list you can copy to your phone.</p>
+          </div>
+        </div>
+
+        <div className="template-grid">
+          <div className="template-card">
+            <strong>1. Plan</strong>
+            <span>Choose 3 to 4 meals for the week and check what you already have.</span>
+          </div>
+          <div className="template-card">
+            <strong>2. Build a plate</strong>
+            <span>Each main meal: a palm of protein, a fist of carbs, two fists of vegetables and a thumb of fat.</span>
+          </div>
+          <div className="template-card">
+            <strong>3. List by category</strong>
+            <span>Group items by section of the shop so one pass covers everything.</span>
+          </div>
+        </div>
+
+        <form className="shop-add" onSubmit={handleAdd}>
+          <input
+            type="text"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Add an item, for example chicken breast"
+            maxLength={60}
+            aria-label="Shopping item"
+          />
+          <select value={category} onChange={(e) => setCategory(e.target.value)} aria-label="Category">
+            {SHOP_CATEGORIES.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+          <button type="submit" className="btn-primary">Add</button>
+        </form>
+
+        <div className="shop-suggest">
+          <span className="shop-suggest-label">Quick add to {category}:</span>
+          {SHOP_SUGGESTIONS[category].map((s) => (
+            <button key={s} type="button" className="chip" onClick={() => addItem(s, category)}>+ {s}</button>
+          ))}
+        </div>
+
+        {items.length === 0 ? (
+          <div className="empty-state">
+            Your list is empty.
+            <div><button className="btn-secondary" onClick={loadStarter}>Load a starter list</button></div>
+          </div>
+        ) : (
+          <>
+            <div className="shop-groups">
+              {SHOP_CATEGORIES.map((cat) => {
+                const group = items.filter((i) => i.category === cat);
+                if (group.length === 0) return null;
+                return (
+                  <div key={cat} className="shop-group">
+                    <h4>{cat}</h4>
+                    <ul>
+                      {group.map((i) => (
+                        <li key={i.id} className={i.done ? 'done' : ''}>
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={i.done}
+                              onChange={() =>
+                                setItems((prev) => prev.map((p) => (p.id === i.id ? { ...p, done: !p.done } : p)))
+                              }
+                            />
+                            <span>{i.text}</span>
+                          </label>
+                          <button
+                            type="button"
+                            className="shop-remove"
+                            aria-label={`Remove ${i.text}`}
+                            onClick={() => setItems((prev) => prev.filter((p) => p.id !== i.id))}
+                          >
+                            <Icon name="x" size={14} />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="shop-actions">
+              <button className="btn-primary" onClick={handleCopy} disabled={openCount === 0}>
+                {copied ? 'Copied - paste it into your notes' : 'Copy to phone notes'}
+              </button>
+              <button className="btn-secondary" onClick={() => setItems((prev) => prev.filter((p) => !p.done))}>
+                Clear ticked items
+              </button>
+              <button
+                className="btn-secondary"
+                onClick={() => {
+                  if (window.confirm('Clear the whole list?')) setItems([]);
+                }}
+              >
+                Clear all
+              </button>
+            </div>
+            <p className="field-hint">{openCount} item{openCount === 1 ? '' : 's'} left to buy. Your list is saved on this device.</p>
+          </>
+        )}
+      </section>
+
+      {/* ---- Block 2: batch cooking ---- */}
+      <section className="section learn-block" id="learn-batch">
+        <div className="learn-head">
+          <span className="learn-icon"><Icon name="clock" size={22} /></span>
+          <div>
+            <h3>Time-Saving Guide: batch cooking</h3>
+            <p className="section-subtitle section-subtitle-tight">Cook once, eat well for days. A typical session takes about two hours.</p>
+          </div>
+        </div>
+
+        <ol className="step-list">
+          {BATCH_STEPS.map((s, i) => (
+            <li key={s.title}>
+              <span className="step-num">{i + 1}</span>
+              <div>
+                <strong>{s.title}</strong>
+                <p>{s.text}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+
+        <h4 className="learn-sub">What freezes well, and what does not</h4>
+        <div className="two-col">
+          <div className="list-card good">
+            <strong>Freezes well</strong>
+            <ul>{FREEZES_WELL.map((f) => <li key={f}>{f}</li>)}</ul>
+          </div>
+          <div className="list-card bad">
+            <strong>Better not to freeze</strong>
+            <ul>{FREEZES_BADLY.map((f) => <li key={f}>{f}</li>)}</ul>
+          </div>
+        </div>
+
+        <h4 className="learn-sub">How long things keep in the fridge</h4>
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr><th>Food</th><th>Keeps for</th></tr>
+            </thead>
+            <tbody>
+              {FRIDGE_LIFE.map(([food, life]) => (
+                <tr key={food}><td>{food}</td><td>{life}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="field-hint">
+          Keep your fridge at 5 degrees C or colder. Most cooked meals keep for 3 to 4 days in the fridge and about 2 to 3
+          months in the freezer at good quality. Thaw in the fridge, not on the counter. When in doubt, throw it out.
+        </p>
+
+        <h4 className="learn-sub">One base, three meals</h4>
+        <div className="seg">
+          {Object.entries(BASE_INGREDIENTS).map(([key, b]) => (
+            <button key={key} className={`seg-btn ${base === key ? 'active' : ''}`} onClick={() => setBase(key)}>
+              <span>{b.label}</span>
+            </button>
+          ))}
+        </div>
+        <p className="base-prep"><strong>Base:</strong> {baseData.prep}</p>
+        <div className="meal-grid">
+          {baseData.meals.map((m, i) => (
+            <div key={m.name} className="meal-card">
+              <span className="meal-num">Meal {i + 1}</span>
+              <strong>{m.name}</strong>
+              <p>{m.text}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ---- Block 3: myth buster ---- */}
+      <section className="section learn-block" id="learn-myths">
+        <div className="learn-head">
+          <span className="learn-icon"><Icon name="star" size={22} /></span>
+          <div>
+            <h3>Myth Buster</h3>
+            <p className="section-subtitle section-subtitle-tight">What the evidence says about advice you hear all the time.</p>
+          </div>
+        </div>
+        <div className="myth-list">
+          {MYTHS.map((m) => (
+            <article key={m.myth} className="myth-card">
+              <div className="myth-top">
+                <span className="myth-tag">{m.verdict}</span>
+                <h4>"{m.myth}"</h4>
+              </div>
+              <p><strong>What the science says.</strong> {m.science}</p>
+              <p className="myth-action"><strong>What to do instead.</strong> {m.action}</p>
+            </article>
+          ))}
+        </div>
+        <p className="field-hint">
+          General education, not medical advice. If you have a medical condition or special dietary needs, talk to your doctor or a dietitian.
+        </p>
+      </section>
+
+      {/* ---- Block 4: substitution chart ---- */}
+      <section className="section learn-block" id="learn-swaps">
+        <div className="learn-head">
+          <span className="learn-icon"><Icon name="grid" size={22} /></span>
+          <div>
+            <h3>The Substitution Chart</h3>
+            <p className="section-subtitle section-subtitle-tight">Upgrade your comfort food without losing the flavour.</p>
+          </div>
+        </div>
+        <div className="chip-row">
+          {SUB_FILTERS.map((f) => (
+            <button key={f} className={`chip ${subFilter === f ? 'active' : ''}`} onClick={() => setSubFilter(f)}>{f}</button>
+          ))}
+        </div>
+        <div className="swap-table">
+          <div className="swap-row swap-head">
+            <span>Comfort favourite</span>
+            <span />
+            <span>Smart upgrade</span>
+            <span>Why it still tastes great</span>
+          </div>
+          {subs.map((s) => (
+            <div key={s.from} className="swap-row">
+              <span className="swap-from">{s.from}</span>
+              <span className="swap-arrow" aria-hidden="true"><Icon name="expand" size={18} /></span>
+              <span className="swap-to">{s.to}</span>
+              <span className="swap-why">{s.why}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function App() {
   const [user, setUser] = useState(null);
   const [userRole, setUserRole] = useState(null);
@@ -1074,6 +1758,12 @@ function App() {
   const [optInDraft, setOptInDraft] = useState(null);
   const [calendarBusy, setCalendarBusy] = useState(false);
   const [calendarNotice, setCalendarNotice] = useState(null);
+  const [clientRecord, setClientRecord] = useState(null);
+  const [clientEvents, setClientEvents] = useState([]);
+  const [checkinMode, setCheckinMode] = useState('day');
+  const [checkinDay, setCheckinDay] = useState(() => ((new Date().getDay() + 6) % 7) + 1);
+  const [clientNotice, setClientNotice] = useState(null);
+  const [reminderDraft, setReminderDraft] = useState(null);
   
   // Invite code flow state
   const [showInviteCodeInput, setShowInviteCodeInput] = useState(false);
@@ -1152,7 +1842,7 @@ function App() {
             ]);
             const checkIns = checkInSnap.docs
               .map((d) => ({ id: d.id, ...d.data() }))
-              .sort((a, b) => (toDate(a.createdAt)?.getTime() || 0) - (toDate(b.createdAt)?.getTime() || 0));
+              .sort((a, b) => (checkInDate(a)?.getTime() || 0) - (checkInDate(b)?.getTime() || 0));
             return [
               c.id,
               {
@@ -1228,6 +1918,11 @@ function App() {
       }
 
       const clientRecord = await getClientRecord(clientId);
+      setClientRecord(clientRecord);
+      if (clientRecord) {
+        const eventSnap = await getDocs(query(collection(db, 'calendarEvents'), where('clientId', '==', clientRecord.id)));
+        setClientEvents(eventSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      }
       if (clientRecord?.coachId) {
         const coachDoc = await getDoc(doc(db, 'users', clientRecord.coachId));
         if (coachDoc.exists()) {
@@ -1296,6 +1991,10 @@ function App() {
       setOptInDraft(null);
       setSelectedEventId(null);
       setCalendarNotice(null);
+      setClientRecord(null);
+      setClientEvents([]);
+      setClientNotice(null);
+      setReminderDraft(null);
       setActiveModal(null);
       setModalMessage(null);
       setCurrentPage('dashboard');
@@ -1322,6 +2021,7 @@ function App() {
         userId: null,
         name: clientName,
         email: '',
+        inviteEmail: String(formData.get('clientEmail') || '').trim(),
         status: 'pending',
         createdAt: serverTimestamp()
       });
@@ -1349,11 +2049,15 @@ function App() {
   const handleSaveProfile = async (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
+    const dateOfBirth = String(formData.get('dateOfBirth') || '');
+    const gymChoice = String(formData.get('gym') || '');
+    const gymOther = String(formData.get('gymOther') || '').trim();
 
     try {
       setLoading(true);
       const profileData = {
-        age: parseInt(formData.get('age')),
+        dateOfBirth,
+        age: ageFromDob(dateOfBirth),
         sex: formData.get('sex'),
         height: parseFloat(formData.get('height')),
         weight: parseFloat(formData.get('weight')),
@@ -1361,64 +2065,172 @@ function App() {
         activityLevel: formData.get('activityLevel'),
         steps: parseInt(formData.get('steps')),
         water: parseFloat(formData.get('water')),
-        createdAt: serverTimestamp(),
-        lastUpdated: serverTimestamp()
+        gymChoice,
+        gym: gymChoice === 'Other' ? gymOther : gymChoice,
+        lastUpdated: serverTimestamp(),
+        ...(profile ? {} : { createdAt: serverTimestamp() })
       };
 
-      await setDoc(doc(db, 'profiles', user.uid), profileData);
-      setProfile(profileData);
+      await setDoc(doc(db, 'profiles', user.uid), profileData, { merge: true });
+      setProfile({ ...(profile || {}), ...profileData });
+      setClientNotice({ type: 'success', text: 'Your profile has been saved.' });
       setCurrentPage('dashboard');
-      e.target.reset();
     } catch (error) {
       console.error('Error saving profile:', error);
+      setClientNotice({ type: 'error', text: 'Could not save your profile. Try again.' });
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSaveWeeklyCheckIn = async (e) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
+  // ---- Client portal: navigation and check-ins ----
+  const goClient = (page) => {
+    setClientNotice(null);
+    setSelectedEventId(null);
+    setCurrentPage(page);
+  };
 
+  // Saves one or more days into this week's check-in (one document per week)
+  const saveCheckInDays = async (changes) => {
+    const weekKey = getWeekKey(new Date());
+    const existing = findWeekDoc(weeklyCheckIns, weekKey);
+    const days = mergeDays(existing?.days, changes, new Date());
+
+    const record = clientRecord || (await getClientRecord(user.uid));
+    const docId = existing ? existing.id : `${user.uid}_${weekKey}`;
+    await setDoc(
+      doc(db, 'weeklyCheckIns', docId),
+      {
+        clientId: user.uid,
+        coachId: record?.coachId || null,
+        weekKey,
+        weekNumber: isoWeekNumber(parseDateKey(weekKey)),
+        days,
+        updatedAt: serverTimestamp(),
+        ...(existing ? {} : { createdAt: serverTimestamp(), weekStart: parseDateKey(weekKey) })
+      },
+      { merge: true }
+    );
+    await fetchClientData(user.uid);
+  };
+
+  const readDay = (fd, day, suffix) => ({
+    day,
+    weight: parseFloat(fd.get(`weight${suffix}`)) || 0,
+    meals: {
+      breakfast: String(fd.get(`breakfast${suffix}`) || '').trim(),
+      lunch: String(fd.get(`lunch${suffix}`) || '').trim(),
+      dinner: String(fd.get(`dinner${suffix}`) || '').trim(),
+      snacks: String(fd.get(`snacks${suffix}`) || '').trim()
+    },
+    water: parseFloat(fd.get(`water${suffix}`)) || 0
+  });
+
+  const handleSaveDay = async (e) => {
+    e.preventDefault();
+    const goNext = e.nativeEvent.submitter && e.nativeEvent.submitter.value === 'next';
+    const entry = readDay(new FormData(e.target), checkinDay, '');
+    if (!dayHasData(entry)) {
+      setClientNotice({ type: 'error', text: 'Add at least your weight, a meal or your water to save this day.' });
+      return;
+    }
     try {
       setLoading(true);
-      const days = [];
-      for (let i = 1; i <= 7; i++) {
-        days.push({
-          day: i,
-          weight: parseFloat(formData.get(`weight-${i}`)) || 0,
-          meals: {
-            breakfast: formData.get(`breakfast-${i}`),
-            lunch: formData.get(`lunch-${i}`),
-            dinner: formData.get(`dinner-${i}`),
-            snacks: formData.get(`snacks-${i}`)
-          },
-          water: parseFloat(formData.get(`water-${i}`)) || 0
-        });
-      }
-
-      // referrals.clientId holds the clients-document id, not the auth uid,
-      // so find the client record by userId to get the coach.
-      const clientRecord = await getClientRecord(user.uid);
-      const coachId = clientRecord?.coachId || null;
-
-      await addDoc(collection(db, 'weeklyCheckIns'), {
-        clientId: user.uid,
-        coachId,
-        weekStart: serverTimestamp(),
-        weekNumber: Math.ceil((new Date().getDate()) / 7),
-        days,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      });
-
-      fetchClientData(user.uid);
-      setCurrentPage('dashboard');
-      e.target.reset();
+      await saveCheckInDays([entry]);
+      setClientNotice({ type: 'success', text: `${WEEKDAYS[checkinDay - 1]} saved.` });
+      if (goNext && checkinDay < 7) setCheckinDay(checkinDay + 1);
     } catch (error) {
-      console.error('Error saving check-in:', error);
+      console.error('Error saving day:', error);
+      setClientNotice({ type: 'error', text: 'Could not save this day. Try again.' });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSaveWeek = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const entries = [1, 2, 3, 4, 5, 6, 7].map((day) => readDay(fd, day, `-${day}`));
+    if (!entries.some(dayHasData)) {
+      setClientNotice({ type: 'error', text: 'Fill in at least one day before saving.' });
+      return;
+    }
+    try {
+      setLoading(true);
+      await saveCheckInDays(entries);
+      setClientNotice({ type: 'success', text: 'Your week has been saved.' });
+    } catch (error) {
+      console.error('Error saving week:', error);
+      setClientNotice({ type: 'error', text: 'Could not save your week. Try again.' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ---- Coach: reminder for an invitation that has not been used ----
+  const openInviteReminder = async (clientId) => {
+    const c = getClientView(clientId);
+    if (!c) return;
+    const code = await getReferralCode(clientId);
+    const texts = buildInviteEmail({
+      coachName: currentCoachName(),
+      clientName: c.name,
+      code,
+      appUrl: window.location.origin
+    });
+    setEmailEditing(false);
+    setReminderDraft({
+      clientId,
+      email: c.inviteEmail || '',
+      subject: texts.subject,
+      body: texts.body,
+      busy: false,
+      copied: false,
+      message: null
+    });
+  };
+
+  const handleSendInviteReminder = async () => {
+    const d = reminderDraft;
+    if (!d) return;
+    const email = d.email.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setReminderDraft({ ...d, message: { type: 'error', text: 'Enter a valid email address for the client.' } });
+      return;
+    }
+    try {
+      setReminderDraft({ ...d, busy: true, message: null });
+      const token = await auth.currentUser.getIdToken();
+      const res = await fetch('/api/send-invite-reminder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ clientId: d.clientId, email, subject: d.subject, body: d.body })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 404) {
+        throw new Error('The email service is not available here. It works on your deployed site. You can use "Copy message" instead.');
+      }
+      if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+      await fetchCoachData(user.uid);
+      setReminderDraft((prev) =>
+        prev ? { ...prev, busy: false, message: { type: 'success', text: `Reminder sent to ${email}.` } } : prev
+      );
+    } catch (error) {
+      console.error('Error sending reminder:', error);
+      setReminderDraft((prev) =>
+        prev ? { ...prev, busy: false, message: { type: 'error', text: error.message } } : prev
+      );
+    }
+  };
+
+  const handleCopyReminder = async () => {
+    if (!reminderDraft) return;
+    try {
+      await navigator.clipboard.writeText(`Subject: ${reminderDraft.subject}\n\n${reminderDraft.body}`);
+      setReminderDraft((prev) => (prev ? { ...prev, copied: true } : prev));
+      setTimeout(() => setReminderDraft((prev) => (prev ? { ...prev, copied: false } : prev)), 2500);
+    } catch (error) {
+      console.error('Copy failed:', error);
     }
   };
 
@@ -1674,6 +2486,7 @@ function App() {
       setLoading(true);
       await addDoc(collection(db, 'adminMessages'), {
         coachId: user.uid,
+        role: userRole,
         name: coachProfile?.displayName || user.displayName || '',
         email: user.email || '',
         subject,
@@ -1696,7 +2509,18 @@ function App() {
     try {
       setLoading(true);
       await setDoc(doc(db, 'users', user.uid), { status: 'closed', closedAt: serverTimestamp() }, { merge: true });
-      await setDoc(doc(db, 'coaches', user.uid), { status: 'closed', closedAt: serverTimestamp() }, { merge: true });
+      if (userRole === 'coach') {
+        await setDoc(doc(db, 'coaches', user.uid), { status: 'closed', closedAt: serverTimestamp() }, { merge: true });
+      } else {
+        const record = clientRecord || (await getClientRecord(user.uid));
+        if (record) {
+          await updateDoc(doc(db, 'clients', record.id), {
+            accountClosed: true,
+            programmeStatus: 'completed',
+            completedAt: serverTimestamp()
+          });
+        }
+      }
       closeModal();
       await handleSignOut();
       setLoginNotice('Your account has been closed. Contact the CoachFlow admin if you need it reopened.');
@@ -2182,7 +3006,7 @@ function App() {
           </button>
           
           {showInviteCodeInput && (
-            <div style={{ marginTop: '20px', padding: '20px', backgroundColor: '#f5f3f0', borderRadius: '8px' }}>
+            <div style={{ marginTop: '20px', padding: '20px', backgroundColor: 'var(--panel)', borderRadius: '12px' }}>
               <h3>Enter Invite Code</h3>
               <input
                 type="text"
@@ -2192,7 +3016,7 @@ function App() {
                   setInviteCodeInput(e.target.value);
                   setInviteCodeError('');
                 }}
-                style={{ width: '100%', padding: '10px', marginBottom: '10px', borderRadius: '4px', border: '1px solid #ccc' }}
+                style={{ width: '100%', padding: '10px', marginBottom: '10px', borderRadius: '10px', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
               />
               {inviteCodeError && <p style={{ color: 'red', marginBottom: '10px' }}>{inviteCodeError}</p>}
               <button 
@@ -2299,6 +3123,15 @@ function App() {
         <header className="client-header">
           <h1>CoachFlow</h1>
           <div className="header-actions">
+            <LanguageMenu language={language} onChange={setLanguage} />
+            <button
+              className="btn-icon"
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+            >
+              <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={18} />
+            </button>
             <span className="user-email">{user.email}</span>
             <button className="btn-secondary" onClick={handleSignOut}>Sign out</button>
           </div>
@@ -2309,64 +3142,10 @@ function App() {
             <h2>Complete Your Profile</h2>
             <p className="section-subtitle">Help your coach understand your fitness background</p>
 
+            {clientNotice && <p className={`form-message ${clientNotice.type}`}>{clientNotice.text}</p>}
+
             <form className="form" onSubmit={handleSaveProfile}>
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Age</label>
-                  <input type="number" name="age" min="18" required />
-                </div>
-                <div className="form-group">
-                  <label>Sex</label>
-                  <select name="sex" required>
-                    <option value="">Select...</option>
-                    <option value="M">Male</option>
-                    <option value="F">Female</option>
-                    <option value="Other">Other</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Height (cm)</label>
-                  <input type="number" name="height" min="100" max="250" required />
-                </div>
-                <div className="form-group">
-                  <label>Current Weight (kg)</label>
-                  <input type="number" name="weight" step="0.1" required />
-                </div>
-              </div>
-
-              <div className="form-group">
-                <label>Target Weight (kg)</label>
-                <input type="number" name="targetWeight" step="0.1" required />
-              </div>
-
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Activity Level</label>
-                  <select name="activityLevel" required>
-                    <option value="">Select...</option>
-                    <option value="sedentary">Sedentary (little exercise)</option>
-                    <option value="light">Light (1-3 days/week)</option>
-                    <option value="moderate">Moderate (3-5 days/week)</option>
-                    <option value="active">Active (6-7 days/week)</option>
-                    <option value="very active">Very Active (twice a day)</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Daily Steps (average)</label>
-                  <input type="number" name="steps" min="0" required />
-                </div>
-                <div className="form-group">
-                  <label>Daily Water (liters)</label>
-                  <input type="number" name="water" step="0.5" min="0" required />
-                </div>
-              </div>
-
+              <ProfileFields profile={null} />
               <button type="submit" className="btn-primary" disabled={loading}>
                 {loading ? 'Saving...' : 'Save Profile'}
               </button>
@@ -2412,6 +3191,7 @@ function App() {
     const selectedEvent = calendarEvents.find((ev) => ev.id === selectedEventId);
     const draftClient = scheduleDraft ? decorated.find((c) => c.id === scheduleDraft.clientId) : null;
     const optInClient = optInDraft ? decorated.find((c) => c.id === optInDraft.clientId) : null;
+    const reminderClient = reminderDraft ? decorated.find((c) => c.id === reminderDraft.clientId) : null;
 
     const optInRows = [
       { kind: 'birthday', label: 'Birthday wishes', desc: 'A personal birthday message every year.', icon: 'gift' },
@@ -2471,7 +3251,7 @@ function App() {
       }
     ];
 
-    const checkInDates = decorated.flatMap((c) => c.checkIns.map((ci) => toDate(ci.createdAt)).filter(Boolean));
+    const checkInDates = decorated.flatMap((c) => c.checkIns.map((ci) => checkInDate(ci)).filter(Boolean));
     const chartPoints = bucketCheckIns(checkInDates, chartRange);
     const chartTotal = chartPoints.reduce((sum, p) => sum + p.value, 0);
 
@@ -2873,7 +3653,7 @@ function App() {
                         ) : (
                           <div className="activity-grid">
                             {completedClients.map((c) =>
-                              renderClientCard(c, `Completed ${formatDate(toDate(c.completedAt))}`)
+                              renderClientCard(c, c.accountClosed ? 'Closed their own account' : `Completed ${formatDate(toDate(c.completedAt))}`)
                             )}
                           </div>
                         )}
@@ -3204,6 +3984,11 @@ function App() {
                       <label>Client Name</label>
                       <input type="text" name="clientName" placeholder="John Smith" required />
                     </div>
+                    <div className="form-group">
+                      <label>Client email (optional)</label>
+                      <input type="email" name="clientEmail" placeholder="client@example.com" />
+                      <small className="field-hint">Used to send an invitation reminder if they have not joined yet.</small>
+                    </div>
                     <button type="submit" className="btn-primary" disabled={loading}>
                       {loading ? 'Adding...' : 'Add Client'}
                     </button>
@@ -3264,7 +4049,19 @@ function App() {
                       <button className="btn-copy" onClick={handleCopyInvite} disabled={!inviteCode}>
                         {copied ? 'Copied' : 'Copy code'}
                       </button>
+                      <button className="btn-secondary" onClick={() => openInviteReminder(selectedClient.id)}>
+                        Send reminder
+                      </button>
                     </div>
+                    {selectedClient.inviteReminders?.count > 0 && (
+                      <p className="field-hint">
+                        Reminders sent: {selectedClient.inviteReminders.count}
+                        {selectedClient.inviteReminders.lastSentAt
+                          ? `, last on ${formatDate(toDate(selectedClient.inviteReminders.lastSentAt))}`
+                          : ''}
+                        .
+                      </p>
+                    )}
                   </section>
                 )}
 
@@ -3315,13 +4112,15 @@ function App() {
                     <section className="section">
                       <h3>Profile</h3>
                       <dl className="profile-facts">
-                        <div><dt>Age</dt><dd>{selectedClient.profile.age ?? '-'}</dd></div>
+                        <div><dt>Date of birth</dt><dd>{selectedClient.dateOfBirth ? formatDate(parseDateKey(selectedClient.dateOfBirth)) : '-'}</dd></div>
+                        <div><dt>Age</dt><dd>{selectedClient.dateOfBirth ? ageFromDob(selectedClient.dateOfBirth) : selectedClient.profile.age ?? '-'}</dd></div>
                         <div><dt>Sex</dt><dd>{sexLabel[selectedClient.profile.sex] || selectedClient.profile.sex || '-'}</dd></div>
                         <div><dt>Height</dt><dd>{fmt(selectedClient.profile.height, 0, ' cm')}</dd></div>
                         <div><dt>Starting weight</dt><dd>{fmt(selectedClient.profile.weight, 1, ' kg')}</dd></div>
                         <div><dt>Activity level</dt><dd className="capitalize">{selectedClient.profile.activityLevel || '-'}</dd></div>
                         <div><dt>Daily steps (average)</dt><dd>{selectedClient.profile.steps ?? '-'}</dd></div>
                         <div><dt>Daily water goal</dt><dd>{fmt(selectedClient.profile.water, 1, ' L')}</dd></div>
+                        <div><dt>Gym</dt><dd>{selectedClient.profile.gym || '-'}</dd></div>
                       </dl>
                     </section>
 
@@ -3344,7 +4143,7 @@ function App() {
                                   onClick={() => setExpandedCheckIn(open ? null : ci.id)}
                                   aria-expanded={open}
                                 >
-                                  <span className="checkin-row-title">Check-in on {formatDate(toDate(ci.createdAt))}</span>
+                                  <span className="checkin-row-title">{ci.weekKey ? `Week of ${formatDate(parseDateKey(ci.weekKey))}` : `Check-in on ${formatDate(toDate(ci.createdAt))}`}</span>
                                   <span className="checkin-row-meta">{logged} of {days.length || 7} days logged</span>
                                 </button>
                                 {open && (
@@ -3364,7 +4163,7 @@ function App() {
                                       <tbody>
                                         {days.map((d) => (
                                           <tr key={d.day}>
-                                            <td>{d.day}</td>
+                                            <td>{dayLabel(ci, d)}</td>
                                             <td>{d.weight > 0 ? `${d.weight} kg` : '-'}</td>
                                             <td>{d.meals?.breakfast || '-'}</td>
                                             <td>{d.meals?.lunch || '-'}</td>
@@ -3432,13 +4231,27 @@ function App() {
                         Emails sent in your name. Switch one on only when {firstName(selectedClient.name)} has agreed to receive it.
                       </p>
 
-                      <form className="dob-form" onSubmit={(e) => handleSaveDob(e, selectedClient)} key={`${selectedClient.id}-${selectedClient.dateOfBirth || ''}`}>
-                        <div className="form-group">
-                          <label>Date of birth</label>
-                          <input type="date" name="dob" defaultValue={selectedClient.dateOfBirth || ''} />
-                        </div>
-                        <button type="submit" className="btn-secondary" disabled={calendarBusy}>Save</button>
-                      </form>
+                      {selectedClient.profile?.dateOfBirth ? (
+                        <p className="dob-from-profile">
+                          Date of birth: <strong>{formatDate(parseDateKey(selectedClient.profile.dateOfBirth))}</strong>
+                          <span>from the client's own profile</span>
+                        </p>
+                      ) : (
+                        <form
+                          className="dob-form"
+                          onSubmit={(e) => handleSaveDob(e, selectedClient)}
+                          key={`${selectedClient.id}-${selectedClient.dateOfBirth || ''}`}
+                        >
+                          <div className="form-group">
+                            <label>Date of birth</label>
+                            <input type="date" name="dob" defaultValue={selectedClient.dateOfBirth || ''} />
+                            <small className="field-hint">
+                              The client has not added it to their profile yet. You can enter it here for now.
+                            </small>
+                          </div>
+                          <button type="submit" className="btn-secondary" disabled={calendarBusy}>Save</button>
+                        </form>
+                      )}
 
                       {!selectedClient.email && (
                         <p className="form-message error">
@@ -3930,6 +4743,76 @@ function App() {
           </Modal>
         )}
 
+        {reminderDraft && reminderClient && (
+          <Modal title={`Remind ${reminderClient.name} to join`} onClose={() => setReminderDraft(null)} wide>
+            <div className="form">
+              <div className="form-group">
+                <label>Client email address</label>
+                <input
+                  type="email"
+                  value={reminderDraft.email}
+                  onChange={(e) => setReminderDraft({ ...reminderDraft, email: e.target.value, message: null })}
+                  placeholder="client@example.com"
+                />
+                <small className="field-hint">
+                  {reminderClient.inviteReminders?.count > 0
+                    ? `Reminders sent so far: ${reminderClient.inviteReminders.count}.`
+                    : 'No reminder has been sent to this client yet.'}
+                </small>
+              </div>
+
+              <div className="email-tabs">
+                <span className="email-tabs-spacer" />
+                <button type="button" className="link-btn" onClick={() => setEmailEditing(!emailEditing)}>
+                  {emailEditing ? 'Show preview' : 'Edit text'}
+                </button>
+              </div>
+
+              {emailEditing ? (
+                <>
+                  <div className="form-group">
+                    <label>Subject</label>
+                    <input
+                      type="text"
+                      value={reminderDraft.subject}
+                      onChange={(e) => setReminderDraft({ ...reminderDraft, subject: e.target.value })}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Message</label>
+                    <textarea
+                      rows="14"
+                      value={reminderDraft.body}
+                      onChange={(e) => setReminderDraft({ ...reminderDraft, body: e.target.value })}
+                    />
+                  </div>
+                </>
+              ) : (
+                <EmailPreview
+                  from={fromLabel}
+                  to={reminderDraft.email || 'Enter the client email above'}
+                  replyTo={user.email}
+                  subject={reminderDraft.subject}
+                  body={reminderDraft.body}
+                />
+              )}
+
+              {reminderDraft.message && (
+                <p className={`form-message ${reminderDraft.message.type}`}>{reminderDraft.message.text}</p>
+              )}
+              <div className="modal-actions">
+                <button type="button" className="btn-secondary" onClick={() => setReminderDraft(null)}>Close</button>
+                <button type="button" className="btn-secondary" onClick={handleCopyReminder}>
+                  {reminderDraft.copied ? 'Copied' : 'Copy message'}
+                </button>
+                <button type="button" className="btn-primary" disabled={reminderDraft.busy} onClick={handleSendInviteReminder}>
+                  {reminderDraft.busy ? 'Sending...' : 'Send email now'}
+                </button>
+              </div>
+            </div>
+          </Modal>
+        )}
+
         {optInDraft && optInClient && (
           <Modal
             title={`${optInDraft.enable ? 'Turn on' : 'Turn off'}: ${optInRows.find((r) => r.kind === optInDraft.kind)?.label}`}
@@ -4023,186 +4906,637 @@ function App() {
   }
 
   if (userRole === 'client') {
+    const myName = user.displayName || user.email;
+    const weekKey = getWeekKey(new Date());
+    const todayKey = toDateKey(new Date());
+    const todayIndex = ((new Date().getDay() + 6) % 7) + 1;
+    const sortedCheckIns = [...weeklyCheckIns].sort(
+      (a, b) => (checkInDate(a)?.getTime() || 0) - (checkInDate(b)?.getTime() || 0)
+    );
+    const weekDoc = findWeekDoc(weeklyCheckIns, weekKey);
+    const weekDays = Array.from({ length: 7 }, (_, i) => {
+      const key = addDaysKey(weekKey, i);
+      const found = (weekDoc?.days || []).find((d) => d.day === i + 1);
+      return { index: i + 1, key, label: WEEKDAYS[i], date: parseDateKey(key), saved: dayHasData(found) ? found : null };
+    });
+    const daysLogged = weekDays.filter((d) => d.saved).length;
+    const selectedDay = weekDays[checkinDay - 1];
+    const savedStamp = weekDoc ? checkInDate(weekDoc)?.getTime() || 0 : 0;
+    const pastCheckIns = sortedCheckIns.filter((ci) => ci !== weekDoc).reverse();
+
+    const stats = buildClientStats(profile, sortedCheckIns);
+    const startWeight = profile?.weight;
+    const progress =
+      startWeight != null && stats.target != null && stats.latestWeight != null && startWeight !== stats.target
+        ? Math.max(0, Math.min(100, ((startWeight - stats.latestWeight) / (startWeight - stats.target)) * 100))
+        : null;
+
+    const myEvents = clientEvents.filter((ev) => ev.status !== 'cancelled');
+    const eventStartMs = (ev) => toDate(ev.startAt)?.getTime() || 0;
+    const nextEvents = myEvents
+      .filter((ev) => ev.status === 'scheduled' && ev.dateKey >= todayKey)
+      .sort((a, b) => eventStartMs(a) - eventStartMs(b));
+    const myEventsByDay = {};
+    myEvents
+      .sort((a, b) => eventStartMs(a) - eventStartMs(b))
+      .forEach((ev) => {
+        if (!myEventsByDay[ev.dateKey]) myEventsByDay[ev.dateKey] = [];
+        myEventsByDay[ev.dateKey].push(ev);
+      });
+    const myGrid = buildMonthGrid(calendarMonth);
+    const selectedClientEvent = clientEvents.find((ev) => ev.id === selectedEventId);
+    const dob = profile?.dateOfBirth || '';
+    const activeTop = currentPage === 'profile' ? 'dashboard' : currentPage;
+    const openClientSettings = (name) => (name === 'profile' ? goClient('profile') : openModal(name));
+
+    const sideItems = [
+      { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
+      { id: 'checkin', label: 'Weekly Check-in', icon: 'check' },
+      { id: 'learning', label: 'Learning', icon: 'book' },
+      { id: 'calendar', label: 'Calendar', icon: 'calendar' },
+      { id: 'chat', label: 'Chat', icon: 'chat' },
+      { id: 'profile', label: 'My Profile', icon: 'user' }
+    ];
+
     return (
-      <div className="client-container">
-        <header className="client-header">
-          <h1>CoachFlow</h1>
-          <div className="header-actions">
-            <span className="user-email">{coachInfo && `Coach: ${coachInfo.name}`}</span>
-            <button className="btn-secondary" onClick={handleSignOut}>Sign out</button>
+      <div className={`dashboard-container ${sidebarCollapsed ? 'collapsed' : ''}`}>
+        <aside className="sidebar">
+          <div className="sidebar-header">
+            {!sidebarCollapsed && <h1>CoachFlow</h1>}
+            <button
+              className="sidebar-toggle"
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              aria-label={sidebarCollapsed ? 'Expand menu' : 'Collapse menu'}
+              title={sidebarCollapsed ? 'Expand menu' : 'Collapse menu'}
+            >
+              <Icon name={sidebarCollapsed ? 'expand' : 'collapse'} />
+            </button>
           </div>
-        </header>
 
-        <main className="client-main">
-          {currentPage === 'dashboard' && (
-            <>
-              <section className="section">
-                <div className="section-header">
-                  <h2>Your Profile</h2>
-                  {profile && <button className="btn-secondary" onClick={() => setCurrentPage('profile')}>Edit</button>}
+          <div className="coach-chip" title={myName}>
+            <span className="client-avatar coach-avatar">{initialOf(myName)}</span>
+            <span className="nav-label coach-chip-text">
+              <span className="coach-chip-name">{myName}</span>
+              <span className="coach-chip-role">{coachInfo ? `Coach: ${coachInfo.name}` : 'Client'}</span>
+            </span>
+          </div>
+
+          <nav className="sidebar-nav">
+            {sideItems.map((item) => (
+              <button
+                key={item.id}
+                className={`nav-item ${currentPage === item.id ? 'active' : ''}`}
+                onClick={() => goClient(item.id)}
+                title={item.label}
+              >
+                <Icon name={item.icon} />
+                <span className="nav-label">{item.label}</span>
+              </button>
+            ))}
+          </nav>
+
+          <div className="sidebar-footer">
+            <button className="nav-item logout" onClick={handleSignOut} title="Log out">
+              <Icon name="logout" />
+              <span className="nav-label">Log out</span>
+            </button>
+          </div>
+        </aside>
+
+        <div className="workspace">
+          <header className="topbar">
+            <div className="topbar-left" />
+            <nav className="topnav" aria-label="Main">
+              {CLIENT_NAV.map((item) => (
+                <button
+                  key={item.id}
+                  className={`topnav-item ${activeTop === item.id ? 'active' : ''}`}
+                  onClick={() => goClient(item.id)}
+                >
+                  <Icon name={item.icon} size={18} />
+                  <span className="topnav-label">{item.label}</span>
+                </button>
+              ))}
+            </nav>
+            <div className="topbar-right">
+              <LanguageMenu language={language} onChange={setLanguage} />
+              <SettingsMenu
+                theme={theme}
+                onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                onOpenModal={openClientSettings}
+              />
+            </div>
+          </header>
+
+          <main className="main-content">
+            {clientNotice && <p className={`form-message ${clientNotice.type}`}>{clientNotice.text}</p>}
+
+            {currentPage === 'dashboard' && (
+              <div className="dashboard-view">
+                <div className="page-header">
+                  <h2>Hello, {firstName(myName)}</h2>
+                  <p>Here is how your week is going.</p>
                 </div>
-                
-                {profile ? (
-                  <div className="profile-grid">
-                    <div className="profile-item">
-                      <span className="label">Current Weight</span>
-                      <span className="value">{profile.weight} kg</span>
-                    </div>
-                    <div className="profile-item">
-                      <span className="label">Target Weight</span>
-                      <span className="value">{profile.targetWeight} kg</span>
-                    </div>
-                    <div className="profile-item">
-                      <span className="label">Progress</span>
-                      <span className="value">{((profile.weight - profile.targetWeight) / (profile.weight - profile.targetWeight + 1) * 100).toFixed(0)}%</span>
-                    </div>
+
+                <div className="stats-grid">
+                  <div className="stat-card">
+                    <div className="stat-value">{fmt(stats.latestWeight, 1)}<span className="stat-unit"> kg</span></div>
+                    <div className="stat-label">Current weight</div>
                   </div>
-                ) : (
-                  <button className="btn-primary" onClick={() => setCurrentPage('profile')}>Complete Profile</button>
-                )}
-              </section>
-
-              <section className="section">
-                <div className="section-header">
-                  <h2>Weekly Check-ins</h2>
-                  <button className="btn-primary" onClick={() => setCurrentPage('checkin')}>+ Log Check-in</button>
+                  <div className="stat-card">
+                    <div className="stat-value">{fmt(stats.target, 1)}<span className="stat-unit"> kg</span></div>
+                    <div className="stat-label">Target weight</div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="stat-value">{progress == null ? '-' : `${Math.round(progress)}%`}</div>
+                    <div className="stat-label">Progress to target</div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="stat-value">{daysLogged}<span className="stat-unit"> / 7</span></div>
+                    <div className="stat-label">Days logged this week</div>
+                  </div>
                 </div>
 
-                {weeklyCheckIns.length === 0 ? (
-                  <p className="empty-state">No check-ins yet. Log your first weekly check-in!</p>
-                ) : (
-                  <div className="checkins-list">
-                    {weeklyCheckIns.map(checkIn => (
-                      <div key={checkIn.id} className="checkin-summary">
-                        <h4>Week {checkIn.weekNumber}</h4>
-                        <p>{checkIn.days?.length || 0} days logged</p>
-                      </div>
+                <section className="section">
+                  <div className="section-header">
+                    <div>
+                      <h3>This week</h3>
+                      <p className="section-subtitle section-subtitle-tight">Log a day at a time, or fill in the whole week.</p>
+                    </div>
+                    <button
+                      className="btn-primary"
+                      onClick={() => {
+                        setCheckinMode('day');
+                        setCheckinDay(todayIndex);
+                        goClient('checkin');
+                      }}
+                    >
+                      Log today
+                    </button>
+                  </div>
+                  <div className="week-strip">
+                    {weekDays.map((d) => (
+                      <button
+                        key={d.key}
+                        className={`week-day ${d.saved ? 'saved' : ''} ${d.key === todayKey ? 'today' : ''}`}
+                        onClick={() => {
+                          setCheckinMode('day');
+                          setCheckinDay(d.index);
+                          goClient('checkin');
+                        }}
+                      >
+                        <span className="week-day-name">{d.label}</span>
+                        <span className="week-day-date">{d.date.getDate()}</span>
+                        <span className="week-day-state">{d.saved ? 'Logged' : 'Empty'}</span>
+                      </button>
                     ))}
                   </div>
+                </section>
+
+                <div className="two-col">
+                  <section className="section">
+                    <h3>Next session with your coach</h3>
+                    {nextEvents.length === 0 ? (
+                      <p className="empty-state">Nothing scheduled yet. Your coach will add your next feedback session here.</p>
+                    ) : (
+                      <button className="upcoming-item" onClick={() => setSelectedEventId(nextEvents[0].id)}>
+                        <span className={`upcoming-icon ${nextEvents[0].type}`}>
+                          <Icon name={nextEvents[0].type === 'meet' ? 'video' : 'mail'} size={16} />
+                        </span>
+                        <span className="upcoming-main">
+                          <span className="activity-name">
+                            {formatWhen(nextEvents[0].dateKey, formatTime(toDate(nextEvents[0].startAt)))}
+                          </span>
+                          <span className="activity-sub">
+                            {nextEvents[0].type === 'meet' ? 'Google Meet 1-on-1' : 'Feedback by email'}
+                          </span>
+                        </span>
+                      </button>
+                    )}
+                  </section>
+
+                  <section className="section">
+                    <div className="section-header">
+                      <h3>Your profile</h3>
+                      <button className="btn-secondary" onClick={() => goClient('profile')}>Edit</button>
+                    </div>
+                    <dl className="profile-facts compact">
+                      <div><dt>Date of birth</dt><dd>{dob ? formatDate(parseDateKey(dob)) : '-'}</dd></div>
+                      <div><dt>Height</dt><dd>{fmt(profile?.height, 0, ' cm')}</dd></div>
+                      <div><dt>Gym</dt><dd>{profile?.gym || '-'}</dd></div>
+                      <div><dt>Activity level</dt><dd className="capitalize">{profile?.activityLevel || '-'}</dd></div>
+                    </dl>
+                  </section>
+                </div>
+
+                <section className="section">
+                  <h3>Check-in history</h3>
+                  {pastCheckIns.length === 0 ? (
+                    <p className="empty-state">Earlier weeks will show up here.</p>
+                  ) : (
+                    <div className="checkins-list">
+                      {pastCheckIns.map((ci) => (
+                        <div key={ci.id} className="checkin-summary">
+                          <h4>
+                            {ci.weekKey
+                              ? `Week of ${formatDate(parseDateKey(ci.weekKey))}`
+                              : `Check-in on ${formatDate(toDate(ci.createdAt))}`}
+                          </h4>
+                          <p>{(ci.days || []).filter(dayHasData).length} days logged</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              </div>
+            )}
+
+            {currentPage === 'checkin' && (
+              <div className="dashboard-view">
+                <div className="page-header page-header-row">
+                  <div>
+                    <h2>Weekly Check-in</h2>
+                    <p>Week of {formatDate(parseDateKey(weekKey))}. {daysLogged} of 7 days logged.</p>
+                  </div>
+                  <div className="seg" role="group" aria-label="Check-in mode">
+                    <button
+                      className={`seg-btn ${checkinMode === 'day' ? 'active' : ''}`}
+                      onClick={() => setCheckinMode('day')}
+                    >
+                      <span>Day by day</span>
+                    </button>
+                    <button
+                      className={`seg-btn ${checkinMode === 'week' ? 'active' : ''}`}
+                      onClick={() => setCheckinMode('week')}
+                    >
+                      <span>Whole week</span>
+                    </button>
+                  </div>
+                </div>
+
+                {checkinMode === 'day' && (
+                  <>
+                    <div className="week-strip">
+                      {weekDays.map((d) => (
+                        <button
+                          key={d.key}
+                          className={`week-day ${d.saved ? 'saved' : ''} ${d.key === todayKey ? 'today' : ''} ${
+                            d.index === checkinDay ? 'selected' : ''
+                          }`}
+                          onClick={() => {
+                            setClientNotice(null);
+                            setCheckinDay(d.index);
+                          }}
+                          aria-pressed={d.index === checkinDay}
+                        >
+                          <span className="week-day-name">{d.label}</span>
+                          <span className="week-day-date">{d.date.getDate()}</span>
+                          <span className="week-day-state">{d.saved ? 'Logged' : 'Empty'}</span>
+                        </button>
+                      ))}
+                    </div>
+
+                    <section className="section">
+                      <h3>
+                        {selectedDay.label} {formatDate(selectedDay.date)}
+                        {selectedDay.saved && <span className="badge active saved-badge">saved</span>}
+                      </h3>
+                      <form
+                        key={`day-${weekDoc ? weekDoc.id : 'new'}-${checkinDay}-${savedStamp}`}
+                        className="form"
+                        onSubmit={handleSaveDay}
+                      >
+                        <div className="form-row">
+                          <div className="form-group">
+                            <label>Weight (kg)</label>
+                            <input
+                              type="number"
+                              name="weight"
+                              step="0.1"
+                              defaultValue={selectedDay.saved?.weight > 0 ? selectedDay.saved.weight : ''}
+                            />
+                          </div>
+                          <div className="form-group">
+                            <label>Water (liters)</label>
+                            <input
+                              type="number"
+                              name="water"
+                              step="0.5"
+                              min="0"
+                              defaultValue={selectedDay.saved?.water > 0 ? selectedDay.saved.water : ''}
+                            />
+                          </div>
+                        </div>
+                        {['breakfast', 'lunch', 'dinner', 'snacks'].map((meal) => (
+                          <div className="form-group" key={meal}>
+                            <label className="capitalize">{meal}</label>
+                            <input
+                              type="text"
+                              name={meal}
+                              placeholder={meal === 'snacks' ? 'Any snacks?' : 'What did you eat?'}
+                              defaultValue={selectedDay.saved?.meals?.[meal] || ''}
+                            />
+                          </div>
+                        ))}
+                        <div className="modal-actions modal-actions-left">
+                          <button type="submit" value="save" className="btn-primary" disabled={loading}>
+                            {loading ? 'Saving...' : 'Save day'}
+                          </button>
+                          {checkinDay < 7 && (
+                            <button type="submit" value="next" className="btn-secondary" disabled={loading}>
+                              Save and go to {WEEKDAYS[checkinDay]}
+                            </button>
+                          )}
+                        </div>
+                      </form>
+                    </section>
+                  </>
                 )}
-              </section>
-            </>
-          )}
 
-          {currentPage === 'profile' && (
-            <div>
-              <button className="btn-back" onClick={() => setCurrentPage('dashboard')}>← Back</button>
-              <form className="form" onSubmit={handleSaveProfile}>
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>Age</label>
-                    <input type="number" name="age" defaultValue={profile?.age} min="18" required />
-                  </div>
-                  <div className="form-group">
-                    <label>Sex</label>
-                    <select name="sex" defaultValue={profile?.sex} required>
-                      <option value="">Select...</option>
-                      <option value="M">Male</option>
-                      <option value="F">Female</option>
-                      <option value="Other">Other</option>
-                    </select>
-                  </div>
+                {checkinMode === 'week' && (
+                  <form
+                    key={`week-${weekDoc ? weekDoc.id : 'new'}-${savedStamp}`}
+                    className="form weekly-form"
+                    onSubmit={handleSaveWeek}
+                  >
+                    {weekDays.map((d) => (
+                      <div key={d.key} className="day-section">
+                        <h4>{d.label} {formatDate(d.date)}</h4>
+                        <div className="form-row">
+                          <div className="form-group">
+                            <label>Weight (kg)</label>
+                            <input
+                              type="number"
+                              name={`weight-${d.index}`}
+                              step="0.1"
+                              defaultValue={d.saved?.weight > 0 ? d.saved.weight : ''}
+                            />
+                          </div>
+                          <div className="form-group">
+                            <label>Water (liters)</label>
+                            <input
+                              type="number"
+                              name={`water-${d.index}`}
+                              step="0.5"
+                              min="0"
+                              defaultValue={d.saved?.water > 0 ? d.saved.water : ''}
+                            />
+                          </div>
+                        </div>
+                        <div className="form-row">
+                          <div className="form-group">
+                            <label>Breakfast</label>
+                            <input type="text" name={`breakfast-${d.index}`} defaultValue={d.saved?.meals?.breakfast || ''} placeholder="What did you eat?" />
+                          </div>
+                          <div className="form-group">
+                            <label>Lunch</label>
+                            <input type="text" name={`lunch-${d.index}`} defaultValue={d.saved?.meals?.lunch || ''} placeholder="What did you eat?" />
+                          </div>
+                        </div>
+                        <div className="form-row">
+                          <div className="form-group">
+                            <label>Dinner</label>
+                            <input type="text" name={`dinner-${d.index}`} defaultValue={d.saved?.meals?.dinner || ''} placeholder="What did you eat?" />
+                          </div>
+                          <div className="form-group">
+                            <label>Snacks</label>
+                            <input type="text" name={`snacks-${d.index}`} defaultValue={d.saved?.meals?.snacks || ''} placeholder="Any snacks?" />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    <button type="submit" className="btn-primary" disabled={loading}>
+                      {loading ? 'Saving...' : 'Save whole week'}
+                    </button>
+                  </form>
+                )}
+              </div>
+            )}
+
+            {currentPage === 'learning' && <LearningPage />}
+
+            {currentPage === 'calendar' && (
+              <div className="dashboard-view">
+                <div className="page-header">
+                  <h2>Calendar</h2>
+                  <p>Your feedback sessions with {coachInfo ? coachInfo.name : 'your coach'}.</p>
                 </div>
 
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>Height (cm)</label>
-                    <input type="number" name="height" defaultValue={profile?.height} min="100" max="250" required />
+                <section className="section calendar-section">
+                  <div className="cal-toolbar">
+                    <div className="cal-nav">
+                      <button
+                        className="btn-icon"
+                        aria-label="Previous month"
+                        onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}
+                      >
+                        <Icon name="back" size={16} />
+                      </button>
+                      <button
+                        className="btn-icon"
+                        aria-label="Next month"
+                        onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}
+                      >
+                        <Icon name="expand" size={16} />
+                      </button>
+                      <h3 className="cal-title">
+                        {calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
+                      </h3>
+                    </div>
+                    <button
+                      className="btn-secondary"
+                      onClick={() => {
+                        const n = new Date();
+                        setCalendarMonth(new Date(n.getFullYear(), n.getMonth(), 1));
+                      }}
+                    >
+                      Today
+                    </button>
                   </div>
-                  <div className="form-group">
-                    <label>Current Weight (kg)</label>
-                    <input type="number" name="weight" defaultValue={profile?.weight} step="0.1" required />
-                  </div>
-                </div>
 
-                <div className="form-group">
-                  <label>Target Weight (kg)</label>
-                  <input type="number" name="targetWeight" defaultValue={profile?.targetWeight} step="0.1" required />
-                </div>
-
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>Activity Level</label>
-                    <select name="activityLevel" defaultValue={profile?.activityLevel} required>
-                      <option value="">Select...</option>
-                      <option value="sedentary">Sedentary (little exercise)</option>
-                      <option value="light">Light (1-3 days/week)</option>
-                      <option value="moderate">Moderate (3-5 days/week)</option>
-                      <option value="active">Active (6-7 days/week)</option>
-                      <option value="very active">Very Active (twice a day)</option>
-                    </select>
+                  <div className="cal-grid cal-weekdays">
+                    {WEEKDAYS.map((w) => (
+                      <div key={w}>{w}</div>
+                    ))}
                   </div>
-                </div>
-
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>Daily Steps (average)</label>
-                    <input type="number" name="steps" defaultValue={profile?.steps} min="0" required />
+                  <div className="cal-grid">
+                    {myGrid.map((cell) => {
+                      const dayEvents = myEventsByDay[cell.key] || [];
+                      const isBirthday = dob && dob.slice(5) === cell.key.slice(5);
+                      return (
+                        <div
+                          key={cell.key}
+                          className={`cal-cell ${cell.inMonth ? '' : 'muted'} ${cell.key === todayKey ? 'today' : ''}`}
+                        >
+                          <span className="cal-day">{cell.date.getDate()}</span>
+                          {dayEvents.slice(0, 3).map((ev) => (
+                            <button
+                              key={ev.id}
+                              className={`cal-chip ${ev.type} ${ev.status}`}
+                              onClick={() => setSelectedEventId(ev.id)}
+                            >
+                              <Icon name={ev.type === 'meet' ? 'video' : 'mail'} size={12} />
+                              <span>{formatTime(toDate(ev.startAt))} Feedback</span>
+                            </button>
+                          ))}
+                          {isBirthday && (
+                            <span className="cal-chip birthday">
+                              <Icon name="gift" size={12} />
+                              <span>Birthday</span>
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
-                  <div className="form-group">
-                    <label>Daily Water (liters)</label>
-                    <input type="number" name="water" defaultValue={profile?.water} step="0.5" min="0" required />
-                  </div>
-                </div>
+                </section>
 
-                <button type="submit" className="btn-primary" disabled={loading}>
-                  {loading ? 'Saving...' : 'Save Profile'}
-                </button>
-              </form>
+                <section className="section">
+                  <h3>Upcoming</h3>
+                  {nextEvents.length === 0 ? (
+                    <p className="empty-state">No sessions scheduled. Your coach will add them here.</p>
+                  ) : (
+                    <ul className="upcoming-list">
+                      {nextEvents.slice(0, 8).map((ev) => (
+                        <li key={ev.id}>
+                          <button className="upcoming-item" onClick={() => setSelectedEventId(ev.id)}>
+                            <span className={`upcoming-icon ${ev.type}`}>
+                              <Icon name={ev.type === 'meet' ? 'video' : 'mail'} size={16} />
+                            </span>
+                            <span className="upcoming-main">
+                              <span className="activity-name">{formatWhen(ev.dateKey, formatTime(toDate(ev.startAt)))}</span>
+                              <span className="activity-sub">{ev.type === 'meet' ? 'Google Meet 1-on-1' : 'Feedback by email'}</span>
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              </div>
+            )}
+
+            {currentPage === 'chat' && (
+              <div className="dashboard-view">
+                <div className="page-header">
+                  <h2>Chat</h2>
+                  <p>Message your coach directly from CoachFlow.</p>
+                </div>
+                <section className="section chat-placeholder">
+                  <Icon name="chat" size={36} />
+                  <h3>Chat is coming soon</h3>
+                  <p>You will be able to message {coachInfo ? coachInfo.name : 'your coach'} here. For now, your coach will reach you by email.</p>
+                  <button className="btn-secondary" onClick={() => goClient('dashboard')}>Back to dashboard</button>
+                </section>
+              </div>
+            )}
+
+            {currentPage === 'profile' && (
+              <div className="page-view">
+                <div className="page-header">
+                  <button className="btn-back icon-text" onClick={() => goClient('dashboard')}>
+                    <Icon name="back" size={16} /> Back
+                  </button>
+                  <h2>My Profile</h2>
+                  <p>Keep this up to date so your coach can help you better.</p>
+                </div>
+                <section className="section">
+                  <form className="form" onSubmit={handleSaveProfile}>
+                    <ProfileFields profile={profile} />
+                    <button type="submit" className="btn-primary" disabled={loading}>
+                      {loading ? 'Saving...' : 'Save Profile'}
+                    </button>
+                  </form>
+                </section>
+              </div>
+            )}
+          </main>
+        </div>
+
+        {selectedClientEvent && (
+          <Modal title="Feedback session" onClose={() => setSelectedEventId(null)}>
+            <dl className="event-facts">
+              <div>
+                <dt>When</dt>
+                <dd>{formatWhen(selectedClientEvent.dateKey, formatTime(toDate(selectedClientEvent.startAt)))}</dd>
+              </div>
+              <div>
+                <dt>Type</dt>
+                <dd>{selectedClientEvent.type === 'meet' ? 'Google Meet 1-on-1' : 'Feedback by email'}</dd>
+              </div>
+              <div><dt>Coach</dt><dd>{coachInfo ? coachInfo.name : '-'}</dd></div>
+              <div><dt>Status</dt><dd className="capitalize">{selectedClientEvent.status}</dd></div>
+            </dl>
+            <div className="modal-actions">
+              <button className="btn-secondary" onClick={() => setSelectedEventId(null)}>Close</button>
+              {selectedClientEvent.meetLink && (
+                <a
+                  className="btn-primary btn-link"
+                  href={selectedClientEvent.meetLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Join Google Meet
+                </a>
+              )}
             </div>
-          )}
+          </Modal>
+        )}
 
-          {currentPage === 'checkin' && (
-            <div>
-              <button className="btn-back" onClick={() => setCurrentPage('dashboard')}>← Back</button>
-              <h2>Weekly Check-in</h2>
-              <form className="form weekly-form" onSubmit={handleSaveWeeklyCheckIn}>
-                {[1, 2, 3, 4, 5, 6, 7].map(day => (
-                  <div key={day} className="day-section">
-                    <h4>Day {day}</h4>
-                    
-                    <div className="form-row">
-                      <div className="form-group">
-                        <label>Weight (kg)</label>
-                        <input type="number" name={`weight-${day}`} step="0.1" />
-                      </div>
-                    </div>
-
-                    <div className="form-group">
-                      <label>Breakfast</label>
-                      <input type="text" name={`breakfast-${day}`} placeholder="What did you eat?" />
-                    </div>
-
-                    <div className="form-group">
-                      <label>Lunch</label>
-                      <input type="text" name={`lunch-${day}`} placeholder="What did you eat?" />
-                    </div>
-
-                    <div className="form-group">
-                      <label>Dinner</label>
-                      <input type="text" name={`dinner-${day}`} placeholder="What did you eat?" />
-                    </div>
-
-                    <div className="form-row">
-                      <div className="form-group">
-                        <label>Snacks</label>
-                        <input type="text" name={`snacks-${day}`} placeholder="Any snacks?" />
-                      </div>
-                      <div className="form-group">
-                        <label>Water (liters)</label>
-                        <input type="number" name={`water-${day}`} step="0.5" min="0" />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-
+        {activeModal === 'contact' && (
+          <Modal title="Contact admin" onClose={closeModal}>
+            <form className="form" onSubmit={handleSendAdminMessage}>
+              <p className="section-subtitle">Ask a question or report a problem. The admin replies to {user.email}.</p>
+              <div className="form-group">
+                <label>Subject</label>
+                <input type="text" name="subject" required />
+              </div>
+              <div className="form-group">
+                <label>Message</label>
+                <textarea name="message" rows="5" required />
+              </div>
+              {modalMessage && <p className={`form-message ${modalMessage.type}`}>{modalMessage.text}</p>}
+              <div className="modal-actions">
+                <button type="button" className="btn-secondary" onClick={closeModal}>Close</button>
                 <button type="submit" className="btn-primary" disabled={loading}>
-                  {loading ? 'Saving...' : 'Save Check-in'}
+                  {loading ? 'Sending...' : 'Send message'}
                 </button>
-              </form>
+              </div>
+            </form>
+          </Modal>
+        )}
+
+        {activeModal === 'close' && (
+          <Modal title="Close account" onClose={closeModal}>
+            <div className="form">
+              <p className="warning-text">
+                Closing your account signs you out and you will not be able to sign in again. Your coach will see that you
+                have left, and automated messages to you will stop.
+              </p>
+              <div className="form-group">
+                <label>Type CLOSE to confirm</label>
+                <input
+                  type="text"
+                  value={closeConfirm}
+                  onChange={(e) => setCloseConfirm(e.target.value)}
+                  autoComplete="off"
+                />
+              </div>
+              {modalMessage && <p className={`form-message ${modalMessage.type}`}>{modalMessage.text}</p>}
+              <div className="modal-actions">
+                <button type="button" className="btn-secondary" onClick={closeModal}>Keep my account</button>
+                <button
+                  type="button"
+                  className="btn-danger"
+                  disabled={closeConfirm !== 'CLOSE' || loading}
+                  onClick={handleCloseAccount}
+                >
+                  {loading ? 'Closing...' : 'Close account'}
+                </button>
+              </div>
             </div>
-          )}
-        </main>
+          </Modal>
+        )}
       </div>
     );
   }
