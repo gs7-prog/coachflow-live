@@ -22,6 +22,222 @@ const generateReferralCode = () => {
   return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 };
 
+// ---------------------------------------------------------------------------
+// Activity thresholds (rolling days since the client's last weekly check-in)
+//   green  : last check-in within GREEN_MAX_DAYS
+//   yellow : last check-in within YELLOW_MAX_DAYS
+//   red    : older than that, or no check-in at all
+// ---------------------------------------------------------------------------
+const DAY_MS = 24 * 60 * 60 * 1000;
+const GREEN_MAX_DAYS = 7;
+const YELLOW_MAX_DAYS = 14;
+
+const ACTIVITY_META = {
+  green: { label: 'Running good', rule: `Checked in within the last ${GREEN_MAX_DAYS} days` },
+  yellow: { label: 'Keep watch', rule: `Last check-in ${GREEN_MAX_DAYS + 1} to ${YELLOW_MAX_DAYS} days ago` },
+  red: { label: 'Action required', rule: `No check-in for over ${YELLOW_MAX_DAYS} days, or none yet` },
+  pending: { label: 'Invite pending', rule: 'Waiting for the client to redeem their invite code' }
+};
+
+const LEVEL_ORDER = { red: 0, yellow: 1, green: 2, pending: 3 };
+
+const TOP_NAV = [
+  { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
+  { id: 'clients', label: 'Client List', icon: 'users' },
+  { id: 'analytics', label: 'Analytics', icon: 'analytics' },
+  { id: 'chat', label: 'Chat', icon: 'chat' }
+];
+
+// Firestore stores clientId on check-ins as the client's auth UID, while
+// referrals.clientId is the id of the document in the "clients" collection.
+// This finds the clients document that belongs to a signed-in client.
+const getClientRecord = async (userId) => {
+  const snap = await getDocs(query(collection(db, 'clients'), where('userId', '==', userId)));
+  return snap.empty ? null : { id: snap.docs[0].id, ...snap.docs[0].data() };
+};
+
+const toDate = (ts) => {
+  if (!ts) return null;
+  if (typeof ts.toDate === 'function') return ts.toDate();
+  const d = new Date(ts);
+  return isNaN(d.getTime()) ? null : d;
+};
+
+const formatDate = (date) =>
+  date ? date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '-';
+
+// A client counts as active as soon as they are linked to a user account.
+// This also fixes clients who redeemed their code before the status update existed.
+const getAccountStatus = (client) => (client.userId ? 'active' : 'pending');
+
+const getLastCheckInDate = (checkIns) => {
+  const times = checkIns.map((c) => toDate(c.createdAt)).filter(Boolean).map((d) => d.getTime());
+  return times.length ? new Date(Math.max(...times)) : null;
+};
+
+const getActivityLevel = (client, checkIns) => {
+  if (getAccountStatus(client) === 'pending') return 'pending';
+  const last = getLastCheckInDate(checkIns);
+  if (!last) return 'red';
+  const days = (Date.now() - last.getTime()) / DAY_MS;
+  if (days <= GREEN_MAX_DAYS) return 'green';
+  if (days <= YELLOW_MAX_DAYS) return 'yellow';
+  return 'red';
+};
+
+const describeLastCheckIn = (date) => {
+  if (!date) return 'No check-ins yet';
+  const days = Math.floor((Date.now() - date.getTime()) / DAY_MS);
+  if (days <= 0) return 'Last check-in today';
+  if (days === 1) return 'Last check-in yesterday';
+  return `Last check-in ${days} days ago`;
+};
+
+const getWeightPoints = (checkIns) => {
+  const points = [];
+  checkIns.forEach((ci) => {
+    (ci.days || []).forEach((d) => {
+      if (d.weight > 0) {
+        points.push({ value: d.weight, label: `${formatDate(toDate(ci.createdAt))}, day ${d.day}` });
+      }
+    });
+  });
+  return points;
+};
+
+const buildClientStats = (profile, checkIns) => {
+  const points = getWeightPoints(checkIns);
+  const latestWeight = points.length ? points[points.length - 1].value : (profile?.weight ?? null);
+  const target = profile?.targetWeight ?? null;
+  const toGo = latestWeight != null && target != null ? latestWeight - target : null;
+  const bmi = latestWeight && profile?.height ? latestWeight / Math.pow(profile.height / 100, 2) : null;
+  const allDays = checkIns.flatMap((ci) => ci.days || []);
+  const waterDays = allDays.filter((d) => d.water > 0);
+  const avgWater = waterDays.length ? waterDays.reduce((s, d) => s + d.water, 0) / waterDays.length : null;
+  return { points, latestWeight, target, toGo, bmi, avgWater };
+};
+
+const fmt = (value, digits = 1, unit = '') =>
+  value == null || isNaN(value) ? '-' : `${Number(value).toFixed(digits)}${unit}`;
+
+const initialOf = (name) => (name || '?').trim().charAt(0).toUpperCase();
+
+// ---------------------------------------------------------------------------
+// Icons (inline SVG, no extra dependency)
+// ---------------------------------------------------------------------------
+const ICONS = {
+  dashboard: (
+    <>
+      <rect x="3" y="3" width="7" height="9" rx="1.5" />
+      <rect x="14" y="3" width="7" height="5" rx="1.5" />
+      <rect x="14" y="12" width="7" height="9" rx="1.5" />
+      <rect x="3" y="16" width="7" height="5" rx="1.5" />
+    </>
+  ),
+  users: (
+    <>
+      <circle cx="9" cy="8" r="3.5" />
+      <path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6" />
+      <path d="M16 4.7a3.5 3.5 0 0 1 0 6.6" />
+      <path d="M18 14.3c2.2.7 3.5 2.6 3.5 5.7" />
+    </>
+  ),
+  analytics: (
+    <>
+      <path d="M5 20v-8" />
+      <path d="M12 20V5" />
+      <path d="M19 20v-5" />
+      <path d="M2 20h20" />
+    </>
+  ),
+  chat: <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.7A8 8 0 1 1 21 12z" />,
+  logout: (
+    <>
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+      <path d="M16 17l5-5-5-5" />
+      <path d="M21 12H9" />
+    </>
+  ),
+  plus: (
+    <>
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
+    </>
+  ),
+  collapse: <path d="M15 6l-6 6 6 6" />,
+  expand: <path d="M9 6l6 6-6 6" />,
+  refresh: (
+    <>
+      <path d="M21 12a9 9 0 1 1-3-6.7" />
+      <path d="M21 3v6h-6" />
+    </>
+  ),
+  back: (
+    <>
+      <path d="M19 12H5" />
+      <path d="M12 19l-7-7 7-7" />
+    </>
+  )
+};
+
+function Icon({ name, size = 20 }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className="icon"
+    >
+      {ICONS[name]}
+    </svg>
+  );
+}
+
+function WeightChart({ points, target }) {
+  if (points.length < 2) {
+    return <p className="empty-state">A trend line appears once the client has logged at least two weigh-ins.</p>;
+  }
+
+  const W = 640;
+  const H = 200;
+  const padX = 36;
+  const padY = 24;
+  const values = points.map((p) => p.value);
+  if (target != null) values.push(target);
+  const min = Math.min(...values) - 1;
+  const max = Math.max(...values) + 1;
+  const x = (i) => padX + (i * (W - 2 * padX)) / (points.length - 1);
+  const y = (v) => H - padY - ((v - min) / (max - min)) * (H - 2 * padY);
+  const line = points.map((p, i) => `${x(i)},${y(p.value)}`).join(' ');
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="weight-chart" role="img" aria-label="Weight trend">
+      {target != null && (
+        <g>
+          <line x1={padX} x2={W - padX} y1={y(target)} y2={y(target)} className="chart-target" />
+          <text x={W - padX} y={y(target) - 6} textAnchor="end" className="chart-label">
+            Target {target} kg
+          </text>
+        </g>
+      )}
+      <polyline points={line} className="chart-line" />
+      {points.map((p, i) => (
+        <circle key={i} cx={x(i)} cy={y(p.value)} r="4" className="chart-dot">
+          <title>{`${p.value} kg - ${p.label}`}</title>
+        </circle>
+      ))}
+      <text x={padX} y={H - 4} className="chart-label">{points[0].label}</text>
+      <text x={W - padX} y={H - 4} textAnchor="end" className="chart-label">{points[points.length - 1].label}</text>
+    </svg>
+  );
+}
+
 function App() {
   const [user, setUser] = useState(null);
   const [userRole, setUserRole] = useState(null);
@@ -33,6 +249,15 @@ function App() {
   const [coachInfo, setCoachInfo] = useState(null);
   const [weeklyCheckIns, setWeeklyCheckIns] = useState([]);
   const [loading, setLoading] = useState(false);
+
+  // Coach dashboard state
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth < 768);
+  const [clientData, setClientData] = useState({});
+  const [returnPage, setReturnPage] = useState('dashboard');
+  const [inviteCode, setInviteCode] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [expandedCheckIn, setExpandedCheckIn] = useState(null);
   
   // Invite code flow state
   const [showInviteCodeInput, setShowInviteCodeInput] = useState(false);
@@ -70,9 +295,90 @@ function App() {
     try {
       const q = query(collection(db, 'clients'), where('coachId', '==', coachId));
       const snapshot = await getDocs(q);
-      setClients(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      const list = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+      // Self-heal: clients who already redeemed their code but still carry the old "pending" status
+      await Promise.all(
+        list
+          .filter((c) => c.userId && c.status !== 'active')
+          .map(async (c) => {
+            try {
+              await updateDoc(doc(db, 'clients', c.id), { status: 'active' });
+              c.status = 'active';
+            } catch (err) {
+              console.error('Could not sync client status:', err);
+            }
+          })
+      );
+
+      setClients(list);
+
+      // Load each linked client's profile and check-ins (keyed by the clients document id)
+      const entries = await Promise.all(
+        list
+          .filter((c) => c.userId)
+          .map(async (c) => {
+            const [profileSnap, checkInSnap] = await Promise.all([
+              getDoc(doc(db, 'profiles', c.userId)),
+              getDocs(query(collection(db, 'weeklyCheckIns'), where('clientId', '==', c.userId)))
+            ]);
+            const checkIns = checkInSnap.docs
+              .map((d) => ({ id: d.id, ...d.data() }))
+              .sort((a, b) => (toDate(a.createdAt)?.getTime() || 0) - (toDate(b.createdAt)?.getTime() || 0));
+            return [c.id, { profile: profileSnap.exists() ? profileSnap.data() : null, checkIns }];
+          })
+      );
+      setClientData(Object.fromEntries(entries));
     } catch (error) {
       console.error('Error fetching coach data:', error);
+    }
+  };
+
+  // Load the invite code when a coach opens a client who has not redeemed yet
+  useEffect(() => {
+    setInviteCode('');
+    setCopied(false);
+    if (userRole !== 'coach' || currentPage !== 'client-detail' || !selectedClientId) return undefined;
+    const target = clients.find((c) => c.id === selectedClientId);
+    if (!target || target.userId) return undefined;
+    let cancelled = false;
+    getReferralCode(selectedClientId).then((code) => {
+      if (!cancelled) setInviteCode(code);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedClientId, currentPage, userRole, clients]);
+
+  const goTo = (page) => {
+    setCurrentPage(page);
+    setSelectedClientId(null);
+    setExpandedCheckIn(null);
+  };
+
+  const openClient = (clientId) => {
+    setReturnPage(['dashboard', 'clients', 'analytics'].includes(currentPage) ? currentPage : 'clients');
+    setSelectedClientId(clientId);
+    setExpandedCheckIn(null);
+    setCurrentPage('client-detail');
+  };
+
+  const handleRefresh = async () => {
+    if (!user) return;
+    setRefreshing(true);
+    await fetchCoachData(user.uid);
+    setRefreshing(false);
+  };
+
+  const handleCopyInvite = async () => {
+    if (!inviteCode) return;
+    try {
+      await navigator.clipboard.writeText(inviteCode);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      console.error('Copy failed:', error);
     }
   };
 
@@ -83,19 +389,16 @@ function App() {
         setProfile(profileDoc.data());
       }
 
-      const q = query(collection(db, 'referrals'), 
-        where('clientId', '==', clientId),
-        where('status', '==', 'accepted')
-      );
-      const referralDocs = await getDocs(q);
-      if (referralDocs.docs.length > 0) {
-        const coachId = referralDocs.docs[0].data().coachId;
-        const coachDoc = await getDoc(doc(db, 'users', coachId));
-        setCoachInfo({
-          id: coachId,
-          name: coachDoc.data().displayName,
-          email: coachDoc.data().email
-        });
+      const clientRecord = await getClientRecord(clientId);
+      if (clientRecord?.coachId) {
+        const coachDoc = await getDoc(doc(db, 'users', clientRecord.coachId));
+        if (coachDoc.exists()) {
+          setCoachInfo({
+            id: clientRecord.coachId,
+            name: coachDoc.data().displayName,
+            email: coachDoc.data().email
+          });
+        }
       }
 
       const checkInQ = query(collection(db, 'weeklyCheckIns'), where('clientId', '==', clientId));
@@ -142,6 +445,10 @@ function App() {
       setUserRole(null);
       setClients([]);
       setProfile(null);
+      setClientData({});
+      setSelectedClientId(null);
+      setWeeklyCheckIns([]);
+      setCoachInfo(null);
       setCurrentPage('dashboard');
       setShowInviteCodeInput(false);
       setInviteCodeInput('');
@@ -181,8 +488,8 @@ function App() {
       });
 
       e.target.reset();
-      fetchCoachData(user.uid);
-      setCurrentPage('dashboard');
+      await fetchCoachData(user.uid);
+      openClient(clientRef.id);
     } catch (error) {
       console.error('Error adding client:', error);
     } finally {
@@ -241,12 +548,10 @@ function App() {
         });
       }
 
-      const refQ = query(collection(db, 'referrals'),
-        where('clientId', '==', user.uid),
-        where('status', '==', 'accepted')
-      );
-      const refDocs = await getDocs(refQ);
-      const coachId = refDocs.docs[0]?.data().coachId;
+      // referrals.clientId holds the clients-document id, not the auth uid,
+      // so find the client record by userId to get the coach.
+      const clientRecord = await getClientRecord(user.uid);
+      const coachId = clientRecord?.coachId || null;
 
       await addDoc(collection(db, 'weeklyCheckIns'), {
         clientId: user.uid,
@@ -363,7 +668,10 @@ function App() {
                     // UPDATE client
                     console.log('REDEEM: Step 7 - Updating client', referral.clientId);
                     await updateDoc(doc(db, 'clients', referral.clientId), {
-                      userId: signedInUser.uid
+                      userId: signedInUser.uid,
+                      email: signedInUser.email || '',
+                      status: 'active',
+                      acceptedAt: serverTimestamp()
                     });
 
                     // UPDATE referral
@@ -490,47 +798,119 @@ function App() {
   }
 
   if (userRole === 'coach') {
-    const selectedClient = clients.find(c => c.id === selectedClientId);
+    const decorated = clients
+      .map((c) => {
+        const data = clientData[c.id] || { profile: null, checkIns: [] };
+        return {
+          ...c,
+          accountStatus: getAccountStatus(c),
+          profile: data.profile,
+          checkIns: data.checkIns,
+          lastCheckIn: getLastCheckInDate(data.checkIns),
+          level: getActivityLevel(c, data.checkIns),
+          stats: buildClientStats(data.profile, data.checkIns)
+        };
+      })
+      .sort((a, b) => LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level] || (a.name || '').localeCompare(b.name || ''));
+
+    const sidebarClients = [...decorated].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    const selectedClient = decorated.find((c) => c.id === selectedClientId);
+    const activeTop = ['add-client', 'client-detail'].includes(currentPage) ? 'clients' : currentPage;
+    const activeCount = decorated.filter((c) => c.accountStatus === 'active').length;
+    const pendingCount = decorated.length - activeCount;
+
+    const renderClientCard = (c) => (
+      <button key={c.id} className={`activity-card level-${c.level}`} onClick={() => openClient(c.id)}>
+        <div className="activity-card-head">
+          <span className="client-avatar large">{initialOf(c.name)}</span>
+          <div className="activity-card-title">
+            <span className="activity-name">{c.name}</span>
+            <span className="activity-sub">
+              {c.accountStatus === 'pending' ? 'Invite not redeemed yet' : describeLastCheckIn(c.lastCheckIn)}
+            </span>
+          </div>
+          <span className={`level-pill ${c.level}`}>{ACTIVITY_META[c.level].label}</span>
+        </div>
+
+        {c.accountStatus === 'pending' && (
+          <p className="activity-note">Open this client to copy their invite code.</p>
+        )}
+        {c.accountStatus === 'active' && !c.profile && (
+          <p className="activity-note">Profile not completed yet.</p>
+        )}
+        {c.accountStatus === 'active' && c.profile && (
+          <div className="activity-metrics">
+            <div>
+              <span className="metric-value">{fmt(c.stats.latestWeight, 1, ' kg')}</span>
+              <span className="metric-label">Current weight</span>
+            </div>
+            <div>
+              <span className="metric-value">{fmt(c.stats.target, 1, ' kg')}</span>
+              <span className="metric-label">Target</span>
+            </div>
+            <div>
+              <span className="metric-value">{c.checkIns.length}</span>
+              <span className="metric-label">Check-ins</span>
+            </div>
+          </div>
+        )}
+      </button>
+    );
+
+    const s = selectedClient ? selectedClient.stats : null;
+    const sexLabel = { M: 'Male', F: 'Female', Other: 'Other' };
 
     return (
-      <div className="dashboard-container">
+      <div className={`dashboard-container ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <aside className="sidebar">
           <div className="sidebar-header">
-            <h1>CoachFlow</h1>
+            {!sidebarCollapsed && <h1>CoachFlow</h1>}
+            <button
+              className="sidebar-toggle"
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              aria-label={sidebarCollapsed ? 'Expand menu' : 'Collapse menu'}
+              title={sidebarCollapsed ? 'Expand menu' : 'Collapse menu'}
+            >
+              <Icon name={sidebarCollapsed ? 'expand' : 'collapse'} />
+            </button>
           </div>
-          
+
           <nav className="sidebar-nav">
             <button
               className={`nav-item ${currentPage === 'dashboard' ? 'active' : ''}`}
-              onClick={() => {
-                setCurrentPage('dashboard');
-                setSelectedClientId(null);
-              }}
+              onClick={() => goTo('dashboard')}
+              title="Dashboard"
             >
-              Dashboard
+              <Icon name="dashboard" />
+              <span className="nav-label">Dashboard</span>
+            </button>
+            <button
+              className={`nav-item ${currentPage === 'chat' ? 'active' : ''}`}
+              onClick={() => goTo('chat')}
+              title="Chat"
+            >
+              <Icon name="chat" />
+              <span className="nav-label">Chat</span>
             </button>
           </nav>
 
           <div className="sidebar-section">
-            <h3>Clients ({clients.length})</h3>
-            <button 
-              className="btn-add-client"
-              onClick={() => setCurrentPage('add-client')}
-            >
-              + Add Client
+            {!sidebarCollapsed && <h3>Clients ({clients.length})</h3>}
+            <button className="btn-add-client" onClick={() => goTo('add-client')} title="Add client">
+              <Icon name="plus" size={16} />
+              <span className="nav-label">Add Client</span>
             </button>
             <ul className="client-list">
-              {clients.map(client => (
-                <li key={client.id}>
+              {sidebarClients.map((c) => (
+                <li key={c.id}>
                   <button
-                    className={`client-item ${selectedClientId === client.id ? 'active' : ''}`}
-                    onClick={() => {
-                      setSelectedClientId(client.id);
-                      setCurrentPage('client-detail');
-                    }}
+                    className={`client-item ${selectedClientId === c.id ? 'active' : ''}`}
+                    onClick={() => openClient(c.id)}
+                    title={`${c.name} - ${ACTIVITY_META[c.level].label}`}
                   >
-                    {client.name}
-                    <span className={`status ${client.status}`}>{client.status}</span>
+                    <span className="client-avatar">{initialOf(c.name)}</span>
+                    <span className="nav-label client-name">{c.name}</span>
+                    <span className={`level-dot nav-label ${c.level}`} />
                   </button>
                 </li>
               ))}
@@ -538,9 +918,39 @@ function App() {
           </div>
 
           <div className="sidebar-footer">
-            <button className="btn-secondary" onClick={handleSignOut}>Sign out</button>
+            <button className="nav-item logout" onClick={handleSignOut} title="Log out">
+              <Icon name="logout" />
+              <span className="nav-label">Log out</span>
+            </button>
           </div>
         </aside>
+
+        <header className="topbar">
+          <nav className="topnav" aria-label="Main">
+            {TOP_NAV.map((item) => (
+              <button
+                key={item.id}
+                className={`topnav-item ${activeTop === item.id ? 'active' : ''}`}
+                onClick={() => goTo(item.id)}
+              >
+                <Icon name={item.icon} size={18} />
+                <span className="topnav-label">{item.label}</span>
+              </button>
+            ))}
+          </nav>
+          <div className="topbar-right">
+            <button
+              className="btn-icon"
+              onClick={handleRefresh}
+              disabled={refreshing}
+              title="Reload client data"
+              aria-label="Reload client data"
+            >
+              <Icon name="refresh" size={18} />
+            </button>
+            <span className="topbar-user">{user.displayName}</span>
+          </div>
+        </header>
 
         <main className="main-content">
           {currentPage === 'dashboard' && (
@@ -552,37 +962,134 @@ function App() {
 
               <div className="stats-grid">
                 <div className="stat-card">
-                  <div className="stat-value">{clients.length}</div>
+                  <div className="stat-value">{decorated.length}</div>
                   <div className="stat-label">Total Clients</div>
                 </div>
                 <div className="stat-card">
-                  <div className="stat-value">{clients.filter(c => c.status === 'active').length}</div>
+                  <div className="stat-value">{activeCount}</div>
                   <div className="stat-label">Active Clients</div>
                 </div>
                 <div className="stat-card">
-                  <div className="stat-value">{clients.filter(c => c.status === 'pending').length}</div>
+                  <div className="stat-value">{pendingCount}</div>
                   <div className="stat-label">Pending Invites</div>
                 </div>
               </div>
 
               <section className="section">
-                <h3>Recent Clients</h3>
-                <div className="clients-table">
-                  {clients.length === 0 ? (
-                    <p className="empty-state">No clients yet. Add your first client to get started.</p>
-                  ) : (
-                    clients.map(client => (
-                      <div key={client.id} className="table-row" onClick={() => {
-                        setSelectedClientId(client.id);
-                        setCurrentPage('client-detail');
-                      }}>
-                        <div className="row-cell">{client.name}</div>
-                        <div className="row-cell"><span className={`badge ${client.status}`}>{client.status}</span></div>
-                        <div className="row-cell">View</div>
-                      </div>
-                    ))
-                  )}
+                <div className="section-header">
+                  <div>
+                    <h3>Client Activity</h3>
+                    <p className="section-subtitle section-subtitle-tight">
+                      Clients who need you most are listed first. Select a client to see everything they have logged.
+                    </p>
+                  </div>
+                  <button className="btn-secondary" onClick={() => goTo('analytics')}>View analytics</button>
                 </div>
+
+                {decorated.length === 0 ? (
+                  <p className="empty-state">No clients yet. Add your first client to get started.</p>
+                ) : (
+                  <div className="activity-grid">{decorated.map(renderClientCard)}</div>
+                )}
+              </section>
+            </div>
+          )}
+
+          {currentPage === 'clients' && (
+            <div className="dashboard-view">
+              <div className="page-header page-header-row">
+                <div>
+                  <h2>Client List</h2>
+                  <p>{decorated.length} {decorated.length === 1 ? 'client' : 'clients'} in total</p>
+                </div>
+                <button className="btn-primary" onClick={() => goTo('add-client')}>+ Add Client</button>
+              </div>
+
+              <section className="section">
+                {decorated.length === 0 ? (
+                  <p className="empty-state">No clients yet. Add your first client to get started.</p>
+                ) : (
+                  <div className="list-table">
+                    <div className="list-row list-head">
+                      <span>Client</span>
+                      <span>Account</span>
+                      <span>Activity</span>
+                      <span>Last check-in</span>
+                    </div>
+                    {decorated.map((c) => (
+                      <button key={c.id} className="list-row" onClick={() => openClient(c.id)}>
+                        <span className="list-client">
+                          <span className="client-avatar">{initialOf(c.name)}</span>
+                          <span className="activity-name">{c.name}</span>
+                        </span>
+                        <span><span className={`badge ${c.accountStatus}`}>{c.accountStatus}</span></span>
+                        <span><span className={`level-pill ${c.level}`}>{ACTIVITY_META[c.level].label}</span></span>
+                        <span className="list-muted">{c.lastCheckIn ? formatDate(c.lastCheckIn) : '-'}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </div>
+          )}
+
+          {currentPage === 'analytics' && (
+            <div className="dashboard-view">
+              <div className="page-header">
+                <h2>Analytics</h2>
+                <p>
+                  How your active clients are keeping up with their weekly check-ins.
+                  {pendingCount > 0 && ` ${pendingCount} pending ${pendingCount === 1 ? 'invite is' : 'invites are'} not included.`}
+                </p>
+              </div>
+
+              <div className="analytics-grid">
+                {['green', 'yellow', 'red'].map((level) => {
+                  const list = decorated.filter((c) => c.level === level);
+                  return (
+                    <section key={level} className={`analytics-card level-${level}`}>
+                      <div className="analytics-card-head">
+                        <div>
+                          <h3>{ACTIVITY_META[level].label}</h3>
+                          <p>{ACTIVITY_META[level].rule}</p>
+                        </div>
+                        <span className="analytics-count">{list.length}</span>
+                      </div>
+                      {list.length === 0 ? (
+                        <p className="empty-state">No clients in this group.</p>
+                      ) : (
+                        <ul className="analytics-list">
+                          {list.map((c) => (
+                            <li key={c.id}>
+                              <button className="analytics-item" onClick={() => openClient(c.id)}>
+                                <span className="client-avatar">{initialOf(c.name)}</span>
+                                <span className="analytics-item-text">
+                                  <span className="activity-name">{c.name}</span>
+                                  <span className="activity-sub">{describeLastCheckIn(c.lastCheckIn)}</span>
+                                </span>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </section>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {currentPage === 'chat' && (
+            <div className="dashboard-view">
+              <div className="page-header">
+                <h2>Chat</h2>
+                <p>Message your clients directly from CoachFlow.</p>
+              </div>
+              <section className="section chat-placeholder">
+                <Icon name="chat" size={36} />
+                <h3>Chat is coming soon</h3>
+                <p>You will be able to message each client here. For now, use the client pages to review their check-ins.</p>
+                <button className="btn-secondary" onClick={() => goTo('clients')}>Go to client list</button>
               </section>
             </div>
           )}
@@ -590,8 +1097,11 @@ function App() {
           {currentPage === 'add-client' && (
             <div className="page-view">
               <div className="page-header">
-                <button className="btn-back" onClick={() => setCurrentPage('dashboard')}>← Back</button>
+                <button className="btn-back icon-text" onClick={() => goTo('clients')}>
+                  <Icon name="back" size={16} /> Back
+                </button>
                 <h2>Add New Client</h2>
+                <p>You will get an invite code to share as soon as the client is created.</p>
               </div>
 
               <form className="form" onSubmit={handleAddClient}>
@@ -607,59 +1117,156 @@ function App() {
           )}
 
           {currentPage === 'client-detail' && selectedClient && (
-            <div className="page-view">
-              <div className="page-header">
-                <button className="btn-back" onClick={() => {
-                  setCurrentPage('dashboard');
-                  setSelectedClientId(null);
-                }}>← Back</button>
-                <div>
+            <div className="client-page">
+              <button className="btn-back icon-text" onClick={() => goTo(returnPage)}>
+                <Icon name="back" size={16} /> Back
+              </button>
+
+              <div className="client-page-header">
+                <span className="client-avatar xlarge">{initialOf(selectedClient.name)}</span>
+                <div className="client-page-title">
                   <h2>{selectedClient.name}</h2>
-                  <p className="status-text">Status: <span className={`status-badge ${selectedClient.status}`}>{selectedClient.status}</span></p>
+                  <div className="client-page-badges">
+                    <span className={`badge ${selectedClient.accountStatus}`}>{selectedClient.accountStatus}</span>
+                    <span className={`level-pill ${selectedClient.level}`}>{ACTIVITY_META[selectedClient.level].label}</span>
+                    {selectedClient.accountStatus === 'active' && (
+                      <span className="list-muted">{describeLastCheckIn(selectedClient.lastCheckIn)}</span>
+                    )}
+                  </div>
                 </div>
               </div>
 
-              {selectedClient.status === 'pending' && (
-                <div className="pending-section">
-                  <h3>Share this invite code with your client:</h3>
+              {selectedClient.accountStatus === 'pending' && (
+                <section className="section">
+                  <h3>Share this invite code with your client</h3>
+                  <p className="section-subtitle">
+                    They sign in, choose "I have an invite code", and enter it. Once they do, this page fills with their data.
+                  </p>
                   <div className="referral-link-box">
-                    <input 
-                      type="text" 
-                      id="inviteCodeDisplay"
-                      value=""
-                      readOnly 
-                    />
-                    <button 
-                      className="btn-copy" 
-                      onClick={async () => {
-                        const code = await getReferralCode(selectedClient.id);
-                        document.getElementById('inviteCodeDisplay').value = code;
-                        navigator.clipboard.writeText(code);
-                        alert('Invite code copied: ' + code);
-                      }}
-                    >
-                      Get & Copy Code
+                    <input type="text" value={inviteCode || 'Loading code...'} readOnly aria-label="Invite code" />
+                    <button className="btn-copy" onClick={handleCopyInvite} disabled={!inviteCode}>
+                      {copied ? 'Copied' : 'Copy code'}
                     </button>
                   </div>
-                  <p style={{ marginTop: '10px', fontSize: '14px', color: '#666' }}>
-                    Client should sign in and click "I have an invite code" to enter this code.
-                  </p>
-                </div>
+                </section>
               )}
 
-              {selectedClient.status === 'active' && (
-                <div className="client-detail-view">
-                  <div className="detail-grid">
-                    <div className="detail-section">
-                      <h3>Profile Information</h3>
-                      <p>Profile data will appear here once client completes setup</p>
+              {selectedClient.accountStatus === 'active' && !selectedClient.profile && (
+                <section className="section">
+                  <p className="empty-state">
+                    {selectedClient.name} has joined but has not completed their profile yet. Their stats appear here once they do.
+                  </p>
+                </section>
+              )}
+
+              {selectedClient.accountStatus === 'active' && selectedClient.profile && (
+                <>
+                  <div className="detail-stats">
+                    <div className="stat-card">
+                      <div className="stat-value">{fmt(s.latestWeight, 1)}<span className="stat-unit"> kg</span></div>
+                      <div className="stat-label">Current weight</div>
                     </div>
-                    <div className="detail-section">
-                      <h3>Weekly Check-ins</h3>
-                      <p>Check-ins will appear here</p>
+                    <div className="stat-card">
+                      <div className="stat-value">{fmt(s.target, 1)}<span className="stat-unit"> kg</span></div>
+                      <div className="stat-label">Target weight</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="stat-value">{s.toGo == null ? '-' : fmt(Math.abs(s.toGo), 1)}<span className="stat-unit"> kg</span></div>
+                      <div className="stat-label">
+                        {s.toGo == null ? 'To target' : s.toGo > 0.05 ? 'Left to lose' : s.toGo < -0.05 ? 'Left to gain' : 'Target reached'}
+                      </div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="stat-value">{fmt(s.bmi, 1)}</div>
+                      <div className="stat-label">BMI</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="stat-value">{selectedClient.checkIns.length}</div>
+                      <div className="stat-label">Check-ins</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="stat-value">{fmt(s.avgWater, 1)}<span className="stat-unit"> L</span></div>
+                      <div className="stat-label">Avg daily water</div>
                     </div>
                   </div>
-                </div>
+
+                  <section className="section">
+                    <h3>Weight trend</h3>
+                    <WeightChart points={s.points} target={s.target} />
+                  </section>
+
+                  <section className="section">
+                    <h3>Profile</h3>
+                    <dl className="profile-facts">
+                      <div><dt>Age</dt><dd>{selectedClient.profile.age ?? '-'}</dd></div>
+                      <div><dt>Sex</dt><dd>{sexLabel[selectedClient.profile.sex] || selectedClient.profile.sex || '-'}</dd></div>
+                      <div><dt>Height</dt><dd>{fmt(selectedClient.profile.height, 0, ' cm')}</dd></div>
+                      <div><dt>Starting weight</dt><dd>{fmt(selectedClient.profile.weight, 1, ' kg')}</dd></div>
+                      <div><dt>Activity level</dt><dd className="capitalize">{selectedClient.profile.activityLevel || '-'}</dd></div>
+                      <div><dt>Daily steps (average)</dt><dd>{selectedClient.profile.steps ?? '-'}</dd></div>
+                      <div><dt>Daily water goal</dt><dd>{fmt(selectedClient.profile.water, 1, ' L')}</dd></div>
+                    </dl>
+                  </section>
+
+                  <section className="section">
+                    <h3>Check-in history</h3>
+                    {selectedClient.checkIns.length === 0 ? (
+                      <p className="empty-state">No check-ins yet. They will appear here as soon as the client logs one.</p>
+                    ) : (
+                      <div className="checkin-history">
+                        {[...selectedClient.checkIns].reverse().map((ci) => {
+                          const open = expandedCheckIn === ci.id;
+                          const days = ci.days || [];
+                          const logged = days.filter(
+                            (d) => d.weight > 0 || d.water > 0 || Object.values(d.meals || {}).some(Boolean)
+                          ).length;
+                          return (
+                            <div key={ci.id} className={`checkin-row ${open ? 'open' : ''}`}>
+                              <button
+                                className="checkin-row-head"
+                                onClick={() => setExpandedCheckIn(open ? null : ci.id)}
+                                aria-expanded={open}
+                              >
+                                <span className="checkin-row-title">Check-in on {formatDate(toDate(ci.createdAt))}</span>
+                                <span className="checkin-row-meta">{logged} of {days.length || 7} days logged</span>
+                              </button>
+                              {open && (
+                                <div className="table-scroll">
+                                  <table className="data-table">
+                                    <thead>
+                                      <tr>
+                                        <th>Day</th>
+                                        <th>Weight</th>
+                                        <th>Breakfast</th>
+                                        <th>Lunch</th>
+                                        <th>Dinner</th>
+                                        <th>Snacks</th>
+                                        <th>Water</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {days.map((d) => (
+                                        <tr key={d.day}>
+                                          <td>{d.day}</td>
+                                          <td>{d.weight > 0 ? `${d.weight} kg` : '-'}</td>
+                                          <td>{d.meals?.breakfast || '-'}</td>
+                                          <td>{d.meals?.lunch || '-'}</td>
+                                          <td>{d.meals?.dinner || '-'}</td>
+                                          <td>{d.meals?.snacks || '-'}</td>
+                                          <td>{d.water > 0 ? `${d.water} L` : '-'}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </section>
+                </>
               )}
             </div>
           )}
