@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, signInWithPopup, reauthenticateWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, addDoc, query, where, getDocs, serverTimestamp, getDoc, doc, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import './App.css';
 
@@ -36,15 +36,17 @@ const ACTIVITY_META = {
   green: { label: 'Running good', rule: `Checked in within the last ${GREEN_MAX_DAYS} days` },
   yellow: { label: 'Keep watch', rule: `Last check-in ${GREEN_MAX_DAYS + 1} to ${YELLOW_MAX_DAYS} days ago` },
   red: { label: 'Action required', rule: `No check-in for over ${YELLOW_MAX_DAYS} days, or none yet` },
-  pending: { label: 'Invite pending', rule: 'Waiting for the client to redeem their invite code' }
+  pending: { label: 'Invite pending', rule: 'Waiting for the client to redeem their invite code' },
+  completed: { label: 'Programme completed', rule: 'Programme marked as completed by you' }
 };
 
-const LEVEL_ORDER = { red: 0, yellow: 1, green: 2, pending: 3 };
+const LEVEL_ORDER = { red: 0, yellow: 1, green: 2, pending: 3, completed: 4 };
 
 const TOP_NAV = [
   { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
   { id: 'clients', label: 'Client List', icon: 'users' },
   { id: 'analytics', label: 'Analytics', icon: 'analytics' },
+  { id: 'calendar', label: 'Calendar', icon: 'calendar' },
   { id: 'chat', label: 'Chat', icon: 'chat' }
 ];
 
@@ -76,6 +78,7 @@ const getLastCheckInDate = (checkIns) => {
 };
 
 const getActivityLevel = (client, checkIns) => {
+  if (client.programmeStatus === 'completed') return 'completed';
   if (getAccountStatus(client) === 'pending') return 'pending';
   const last = getLastCheckInDate(checkIns);
   if (!last) return 'red';
@@ -266,15 +269,15 @@ const LANGUAGES = [
 const PLANS = [
   {
     id: 'starter',
-    name: 'Starter',
-    price: 19,
-    tagline: 'For coaches who are just getting started',
+    name: 'Free',
+    price: 0,
+    tagline: 'Everything you need to get started',
     features: ['Up to 10 clients', 'Client profiles and weekly check-ins', 'Activity analytics']
   },
   {
     id: 'pro',
     name: 'Pro',
-    price: 49,
+    price: 19.99,
     tagline: 'For a growing coaching practice',
     features: ['Unlimited clients', 'Everything in Starter', 'Priority support', 'AI check-in analysis when released']
   }
@@ -462,7 +465,40 @@ const ICONS_EXTRA = {
       <path d="M12 10v5M12 18h.01" />
     </>
   ),
-  check: <path d="M5 12l5 5 9-10" />
+  check: <path d="M5 12l5 5 9-10" />,
+  calendar: (
+    <>
+      <rect x="3" y="4" width="18" height="17" rx="2.5" />
+      <path d="M3 9h18M8 2v4M16 2v4" />
+    </>
+  ),
+  video: (
+    <>
+      <rect x="2" y="6" width="14" height="12" rx="2.5" />
+      <path d="M16 10l6-3v10l-6-3z" />
+    </>
+  ),
+  pause: (
+    <>
+      <rect x="6" y="5" width="4" height="14" rx="1" />
+      <rect x="14" y="5" width="4" height="14" rx="1" />
+    </>
+  ),
+  trophy: (
+    <>
+      <path d="M8 21h8M12 17v4" />
+      <path d="M7 4h10v5a5 5 0 0 1-10 0V4z" />
+      <path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3" />
+    </>
+  ),
+  gift: (
+    <>
+      <rect x="3" y="8" width="18" height="4" rx="1" />
+      <path d="M12 8v13M5 12v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8" />
+      <path d="M12 8c-1-3-5-4-5-1.5S10 8 12 8zM12 8c1-3 5-4 5-1.5S14 8 12 8z" />
+    </>
+  ),
+  star: <path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9L12 3z" />
 };
 
 // ---------------------------------------------------------------------------
@@ -611,7 +647,7 @@ function SettingsMenu({ theme, onToggleTheme, onOpenModal }) {
   );
 }
 
-function Modal({ title, onClose, children }) {
+function Modal({ title, onClose, children, wide }) {
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape') onClose();
@@ -628,7 +664,7 @@ function Modal({ title, onClose, children }) {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="modal" role="dialog" aria-modal="true" aria-label={title}>
+      <div className={`modal ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-label={title}>
         <div className="modal-head">
           <h3>{title}</h3>
           <button className="btn-icon" onClick={onClose} aria-label="Close">
@@ -708,6 +744,289 @@ function AreaChart({ points }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Calendar, automated messages and client lifecycle
+// ---------------------------------------------------------------------------
+const INACTIVE_DAYS = 30;
+const GOOGLE_CAL_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
+
+// Replace the urls with your own referral links when you have them
+const PARTNERS = [
+  { id: 'smartfood', name: 'SmartFOOD.ee', url: 'https://smartfood.ee' },
+  { id: 'fitfood', name: 'FitFoodEstonia.ee', url: 'https://fitfoodestonia.ee' },
+  { id: 'perfectprotein', name: 'PerfectProtein.ee', url: 'https://perfectprotein.ee' }
+];
+
+const CLIENT_VIEWS = [
+  { id: 'overview', label: 'Overview', icon: 'grid' },
+  { id: 'list', label: 'List', icon: 'list' },
+  { id: 'segments', label: 'Segments', icon: 'segments' },
+  { id: 'inactive', label: 'Inactive', icon: 'pause' },
+  { id: 'completed', label: 'Completed', icon: 'trophy' }
+];
+
+const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+// ---- Date keys (YYYY-MM-DD in the coach's local time) ----
+const toDateKey = (d) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+const parseDateKey = (key) => {
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(y, m - 1, d);
+};
+
+const addDaysKey = (key, days) => {
+  const d = parseDateKey(key);
+  d.setDate(d.getDate() + days);
+  return toDateKey(d);
+};
+
+// Next occurrence of a month/day on or after today (29 Feb falls back to 28 Feb)
+const nextAnnualKey = (month, day) => {
+  const today = startOfDay(new Date());
+  const make = (year) => {
+    let d = new Date(year, month - 1, day);
+    if (d.getMonth() !== month - 1) d = new Date(year, month - 1, day - 1);
+    return d;
+  };
+  let d = make(today.getFullYear());
+  if (d.getTime() < today.getTime()) d = make(today.getFullYear() + 1);
+  return toDateKey(d);
+};
+
+const nextBirthdayKey = (dob) => {
+  const [, m, d] = dob.split('-').map(Number);
+  return nextAnnualKey(m, d);
+};
+
+const nextChristmasKey = () => nextAnnualKey(12, 24);
+
+const formatWhen = (dateKey, time) => {
+  const day = parseDateKey(dateKey).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+  return time ? `${day} at ${time}` : day;
+};
+
+const formatTime = (date) => (date ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '');
+
+const firstName = (name) => (name || '').trim().split(/\s+/)[0] || 'there';
+
+// ---- Client decoration (shared by the dashboard and the handlers) ----
+const getInactiveDays = (client, checkIns) => {
+  if (getAccountStatus(client) === 'pending' || client.programmeStatus === 'completed') return null;
+  const last = getLastCheckInDate(checkIns);
+  const since = last || toDate(client.acceptedAt) || toDate(client.createdAt);
+  if (!since) return null;
+  const days = Math.floor((Date.now() - since.getTime()) / DAY_MS);
+  return days >= INACTIVE_DAYS ? days : null;
+};
+
+const decorateClient = (c, clientData) => {
+  const data = clientData[c.id] || { profile: null, checkIns: [], email: '' };
+  return {
+    ...c,
+    email: data.email || c.email || '',
+    accountStatus: getAccountStatus(c),
+    profile: data.profile,
+    checkIns: data.checkIns,
+    lastCheckIn: getLastCheckInDate(data.checkIns),
+    level: getActivityLevel(c, data.checkIns),
+    stats: buildClientStats(data.profile, data.checkIns),
+    inactiveDays: getInactiveDays(c, data.checkIns)
+  };
+};
+
+// ---- Message templates (what you see in the preview is exactly what is sent) ----
+const clientFooter = (coachName) =>
+  `\n\n--\nYou are receiving this because your coach ${coachName} set it up for you in CoachFlow. ` +
+  `If you would rather not get these messages, reply and ask ${firstName(coachName)} to switch them off.`;
+
+const progressLines = (client) => {
+  const st = client.stats;
+  const lines = [];
+  const n = client.checkIns.length;
+  if (n > 0) {
+    const latest = client.lastCheckIn ? `, the latest on ${formatDate(client.lastCheckIn)}` : '';
+    lines.push(`You have logged ${n} weekly check-in${n === 1 ? '' : 's'} so far${latest}.`);
+  } else {
+    lines.push('I have not seen a weekly check-in from you yet - logging one gives us much more to work with.');
+  }
+  const start = client.profile?.weight;
+  if (st.latestWeight != null && start != null && st.points.length) {
+    const diff = st.latestWeight - start;
+    if (Math.abs(diff) < 0.05) {
+      lines.push(`Your weight has held steady at ${fmt(st.latestWeight, 1)} kg.`);
+    } else {
+      lines.push(
+        `Your weight has moved from ${fmt(start, 1)} kg to ${fmt(st.latestWeight, 1)} kg ` +
+          `(${diff < 0 ? 'down' : 'up'} ${fmt(Math.abs(diff), 1)} kg).`
+      );
+    }
+  }
+  if (st.toGo != null && st.target != null) {
+    lines.push(
+      Math.abs(st.toGo) <= 0.05
+        ? 'You have reached your target weight.'
+        : `Your target is ${fmt(st.target, 1)} kg, so ${fmt(Math.abs(st.toGo), 1)} kg to go.`
+    );
+  }
+  if (st.avgWater != null) {
+    lines.push(`You are averaging ${fmt(st.avgWater, 1)} L of water on the days you log it.`);
+  }
+  return lines;
+};
+
+const buildFeedbackEmail = ({ coachName, client, whenText, type, meetToken }) => {
+  const cf = firstName(client.name);
+  const coachF = firstName(coachName);
+  const intro =
+    type === 'meet'
+      ? `It is time for our feedback session - we are meeting on ${whenText}.\n\nJoin me on Google Meet here: ${meetToken}`
+      : 'It is time for our feedback session, and this time I am giving you my feedback by email.';
+  const outro =
+    type === 'meet'
+      ? 'Have a think about what has gone well and where you want my help, and bring any questions along.'
+      : 'If you would like to talk any of this through, just reply to this email and we will find a time.';
+  const body =
+    `Hey ${cf}, Coach ${coachF} here!\n\n${intro}\n\n` +
+    `Here is a quick look at your progress so far:\n${progressLines(client).map((l) => `- ${l}`).join('\n')}\n\n` +
+    `${outro}\n\nKeep it up - every logged day makes our conversations better.\n\nCoach ${coachF}` +
+    clientFooter(coachName);
+  return {
+    subject: type === 'meet' ? `Our feedback session: ${whenText}` : `Your feedback from Coach ${coachF}`,
+    body
+  };
+};
+
+const buildCoachReminder = ({ coachName, client, whenText, type, meetToken }) => {
+  const coachF = firstName(coachName);
+  const how = type === 'meet' ? 'a Google Meet 1-on-1' : 'feedback by email';
+  const meetLine = type === 'meet' ? `\nMeeting link: ${meetToken}\n` : '\n';
+  return {
+    subject: `Reminder: feedback for ${client.name} - ${whenText}`,
+    body:
+      `Hi ${coachF},\n\nThis is your reminder to give ${client.name} feedback (${how}) on ${whenText}.${meetLine}\n` +
+      `Where ${firstName(client.name)} stands right now:\n${progressLines(client).map((l) => `- ${l}`).join('\n')}\n\n` +
+      `Open CoachFlow and look at ${firstName(client.name)}'s page before you start.`
+  };
+};
+
+const buildBirthdayEmail = ({ coachName, client }) => {
+  const cf = firstName(client.name);
+  const coachF = firstName(coachName);
+  return {
+    subject: `Happy birthday, ${cf}!`,
+    body:
+      `Hey ${cf}, Coach ${coachF} here!\n\nHappy birthday! Today is all about you, so enjoy it and celebrate in style. ` +
+      `Thank you for the effort you put in - it has been great working with you.\n\n` +
+      `Enjoy your day, and we will pick things up again tomorrow.\n\nCoach ${coachF}` +
+      clientFooter(coachName)
+  };
+};
+
+const buildChristmasEmail = ({ coachName, client }) => {
+  const cf = firstName(client.name);
+  const coachF = firstName(coachName);
+  return {
+    subject: `Merry Christmas, ${cf}!`,
+    body:
+      `Hey ${cf}, Coach ${coachF} here!\n\nWishing you a warm and relaxed Christmas with the people you love. ` +
+      `Enjoy the good food and the time off - one holiday does not undo the progress you have made.\n\n` +
+      `Thank you for your hard work this year. I am looking forward to what we do next.\n\nCoach ${coachF}` +
+      clientFooter(coachName)
+  };
+};
+
+const buildPartnerEmail = ({ coachName, client, partner }) => {
+  const cf = firstName(client.name);
+  const coachF = firstName(coachName);
+  return {
+    subject: `A tip from Coach ${coachF}: ${partner.name}`,
+    body:
+      `Hey ${cf}, Coach ${coachF} here!\n\nI work with ${partner.name} and thought it could make eating well easier ` +
+      `when life gets busy. Have a look: ${partner.url}\n\n` +
+      `There is no obligation at all - it is simply something I think can help you stay on track. ` +
+      `If you have questions, reply to this email.\n\nCoach ${coachF}` +
+      clientFooter(coachName)
+  };
+};
+
+const describeEmailStatus = (mail) => {
+  if (!mail) return 'Not scheduled';
+  if (mail.status === 'sent') return `Sent ${formatDate(toDate(mail.sentAt))}`;
+  if (mail.status === 'failed') return `Failed: ${mail.error || 'unknown error'}`;
+  if (mail.status === 'cancelled') return 'Cancelled';
+  if (mail.status === 'expired') return 'Expired before it could be sent';
+  return `Scheduled for ${formatDate(parseDateKey(mail.sendOn))}`;
+};
+
+// ---- Month grid (weeks start on Monday) ----
+const buildMonthGrid = (monthStart) => {
+  const offset = (monthStart.getDay() + 6) % 7;
+  const first = new Date(monthStart.getFullYear(), monthStart.getMonth(), 1 - offset);
+  return Array.from({ length: 42 }, (_, i) => {
+    const d = new Date(first.getFullYear(), first.getMonth(), first.getDate() + i);
+    return { date: d, key: toDateKey(d), inMonth: d.getMonth() === monthStart.getMonth() };
+  });
+};
+
+// ---- Google Calendar (the access token comes from the coach's Google sign-in) ----
+const createGoogleMeetEvent = async ({ token, summary, description, start, end, attendeeEmail }) => {
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const res = await fetch(
+    'https://www.googleapis.com/calendar/v3/calendars/primary/events?conferenceDataVersion=1&sendUpdates=all',
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        summary,
+        description,
+        start: { dateTime: start.toISOString(), timeZone },
+        end: { dateTime: end.toISOString(), timeZone },
+        attendees: attendeeEmail ? [{ email: attendeeEmail }] : [],
+        conferenceData: {
+          createRequest: {
+            requestId: `cf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            conferenceSolutionKey: { type: 'hangoutsMeet' }
+          }
+        }
+      })
+    }
+  );
+  if (res.status === 401) throw new Error('GOOGLE_AUTH_EXPIRED');
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message || `Google Calendar error ${res.status}`);
+  }
+  const data = await res.json();
+  const video = (data.conferenceData?.entryPoints || []).find((e) => e.entryPointType === 'video');
+  return { eventId: data.id, meetLink: data.hangoutLink || video?.uri || '', htmlLink: data.htmlLink || '' };
+};
+
+const deleteGoogleEvent = async ({ token, eventId }) => {
+  const res = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}?sendUpdates=all`,
+    { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (res.status === 401) throw new Error('GOOGLE_AUTH_EXPIRED');
+  if (!res.ok && res.status !== 404 && res.status !== 410) throw new Error(`Google Calendar error ${res.status}`);
+};
+
+function EmailPreview({ from, to, replyTo, sendOn, subject, body }) {
+  return (
+    <div className="email-preview">
+      <dl className="email-meta">
+        <div><dt>From</dt><dd>{from}</dd></div>
+        <div><dt>To</dt><dd>{to}</dd></div>
+        {replyTo && <div><dt>Reply-to</dt><dd>{replyTo}</dd></div>}
+        {sendOn && <div><dt>Sends</dt><dd>{sendOn}</dd></div>}
+        <div><dt>Subject</dt><dd className="email-subject">{subject}</dd></div>
+      </dl>
+      <div className="email-body">{body}</div>
+    </div>
+  );
+}
+
 function App() {
   const [user, setUser] = useState(null);
   const [userRole, setUserRole] = useState(null);
@@ -741,6 +1060,20 @@ function App() {
   const [checkoutPlanId, setCheckoutPlanId] = useState(null);
   const [selectedMethodId, setSelectedMethodId] = useState('');
   const [billingBusy, setBillingBusy] = useState(false);
+  const [calendarEvents, setCalendarEvents] = useState([]);
+  const [outbox, setOutbox] = useState([]);
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
+  const [googleAccess, setGoogleAccess] = useState(null);
+  const [scheduleDraft, setScheduleDraft] = useState(null);
+  const [emailTab, setEmailTab] = useState('client');
+  const [emailEditing, setEmailEditing] = useState(false);
+  const [selectedEventId, setSelectedEventId] = useState(null);
+  const [optInDraft, setOptInDraft] = useState(null);
+  const [calendarBusy, setCalendarBusy] = useState(false);
+  const [calendarNotice, setCalendarNotice] = useState(null);
   
   // Invite code flow state
   const [showInviteCodeInput, setShowInviteCodeInput] = useState(false);
@@ -764,6 +1097,7 @@ function App() {
         if (userDoc.data().role === 'coach') {
           fetchCoachData(userId);
           fetchBilling(userId);
+          fetchCalendar(userId);
         } else if (userDoc.data().role === 'client') {
           fetchClientData(userId);
         }
@@ -811,14 +1145,22 @@ function App() {
         list
           .filter((c) => c.userId)
           .map(async (c) => {
-            const [profileSnap, checkInSnap] = await Promise.all([
+            const [profileSnap, checkInSnap, userSnap] = await Promise.all([
               getDoc(doc(db, 'profiles', c.userId)),
-              getDocs(query(collection(db, 'weeklyCheckIns'), where('clientId', '==', c.userId)))
+              getDocs(query(collection(db, 'weeklyCheckIns'), where('clientId', '==', c.userId))),
+              getDoc(doc(db, 'users', c.userId))
             ]);
             const checkIns = checkInSnap.docs
               .map((d) => ({ id: d.id, ...d.data() }))
               .sort((a, b) => (toDate(a.createdAt)?.getTime() || 0) - (toDate(b.createdAt)?.getTime() || 0));
-            return [c.id, { profile: profileSnap.exists() ? profileSnap.data() : null, checkIns }];
+            return [
+              c.id,
+              {
+                profile: profileSnap.exists() ? profileSnap.data() : null,
+                checkIns,
+                email: userSnap.exists() ? userSnap.data().email || '' : ''
+              }
+            ];
           })
       );
       setClientData(Object.fromEntries(entries));
@@ -845,12 +1187,14 @@ function App() {
   }, [selectedClientId, currentPage, userRole, clients]);
 
   const goTo = (page) => {
+    setCalendarNotice(null);
     setCurrentPage(page);
     setSelectedClientId(null);
     setExpandedCheckIn(null);
   };
 
   const openClient = (clientId) => {
+    setCalendarNotice(null);
     setReturnPage(['dashboard', 'clients', 'analytics'].includes(currentPage) ? currentPage : 'clients');
     setSelectedClientId(clientId);
     setExpandedCheckIn(null);
@@ -861,6 +1205,7 @@ function App() {
     if (!user) return;
     setRefreshing(true);
     await fetchCoachData(user.uid);
+    await fetchCalendar(user.uid);
     setRefreshing(false);
   };
 
@@ -944,6 +1289,13 @@ function App() {
       setCoachInfo(null);
       setCoachProfile(null);
       setBilling({ methods: [], invoices: [], subscription: null });
+      setCalendarEvents([]);
+      setOutbox([]);
+      setGoogleAccess(null);
+      setScheduleDraft(null);
+      setOptInDraft(null);
+      setSelectedEventId(null);
+      setCalendarNotice(null);
       setActiveModal(null);
       setModalMessage(null);
       setCurrentPage('dashboard');
@@ -1356,6 +1708,461 @@ function App() {
     }
   };
 
+  // ---- Calendar, feedback sessions and automated messages ----
+  const fetchCalendar = async (coachId) => {
+    try {
+      const [eventSnap, outboxSnap] = await Promise.all([
+        getDocs(query(collection(db, 'calendarEvents'), where('coachId', '==', coachId))),
+        getDocs(query(collection(db, 'scheduledEmails'), where('coachId', '==', coachId)))
+      ]);
+      setCalendarEvents(eventSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setOutbox(outboxSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    } catch (error) {
+      console.error('Error fetching calendar data:', error);
+    }
+  };
+
+  const currentCoachName = () => coachProfile?.displayName || user?.displayName || user?.email || 'Coach';
+  const googleReady = () => !!googleAccess && googleAccess.expiresAt > Date.now();
+  const getClientView = (clientId) => {
+    const c = clients.find((x) => x.id === clientId);
+    return c ? decorateClient(c, clientData) : null;
+  };
+
+  const handleConnectGoogle = async () => {
+    try {
+      const provider = new GoogleAuthProvider();
+      provider.addScope(GOOGLE_CAL_SCOPE);
+      provider.setCustomParameters({ login_hint: user.email || '' });
+      const result = await reauthenticateWithPopup(auth.currentUser, provider);
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (!credential || !credential.accessToken) throw new Error('Google did not return an access token.');
+      // The token lives in memory only and lasts about an hour
+      setGoogleAccess({ token: credential.accessToken, expiresAt: Date.now() + 55 * 60 * 1000 });
+      setCalendarNotice({ type: 'success', text: 'Google Calendar is connected for about an hour.' });
+      setScheduleDraft((prev) => (prev ? { ...prev, message: null } : prev));
+    } catch (error) {
+      console.error('Google connect failed:', error);
+      setCalendarNotice({
+        type: 'error',
+        text: 'Could not connect Google Calendar. Check that the Calendar API is enabled and your account is a test user (see SETUP.md).'
+      });
+    }
+  };
+
+  const buildScheduleTexts = (d) => {
+    const c = getClientView(d.clientId);
+    if (!c) return { clientSubject: '', clientBody: '', coachSubject: '', coachBody: '' };
+    const whenText = formatWhen(d.date, d.time);
+    const meetToken = d.type === 'meet' ? d.manualMeetLink.trim() || '{{MEET_LINK}}' : '';
+    const coachName = currentCoachName();
+    const client = buildFeedbackEmail({ coachName, client: c, whenText, type: d.type, meetToken });
+    const coach = buildCoachReminder({ coachName, client: c, whenText, type: d.type, meetToken });
+    return {
+      clientSubject: client.subject,
+      clientBody: client.body,
+      coachSubject: coach.subject,
+      coachBody: coach.body
+    };
+  };
+
+  const openSchedule = (clientId = '') => {
+    const base = {
+      clientId,
+      type: 'meet',
+      date: toDateKey(new Date(Date.now() + DAY_MS)),
+      time: '10:00',
+      duration: 30,
+      remindDays: 1,
+      sendClientEmail: true,
+      manualMeetLink: '',
+      edited: { client: false, coach: false },
+      message: null
+    };
+    setScheduleDraft({ ...base, ...buildScheduleTexts(base) });
+    setEmailTab('client');
+    setEmailEditing(false);
+  };
+
+  // Changing a field regenerates any message text the coach has not edited by hand
+  const updateDraft = (patch) =>
+    setScheduleDraft((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, ...patch, message: null };
+      const texts = buildScheduleTexts(next);
+      return {
+        ...next,
+        ...(next.edited.client ? {} : { clientSubject: texts.clientSubject, clientBody: texts.clientBody }),
+        ...(next.edited.coach ? {} : { coachSubject: texts.coachSubject, coachBody: texts.coachBody })
+      };
+    });
+
+  const editDraftText = (which, field, value) =>
+    setScheduleDraft((prev) =>
+      prev ? { ...prev, [field]: value, edited: { ...prev.edited, [which]: true }, message: null } : prev
+    );
+
+  const setDraftMessage = (message) => setScheduleDraft((prev) => (prev ? { ...prev, message } : prev));
+
+  const handleScheduleSave = async () => {
+    const d = scheduleDraft;
+    if (!d) return;
+    const c = getClientView(d.clientId);
+    if (!c) {
+      setDraftMessage({ type: 'error', text: 'Choose a client first.' });
+      return;
+    }
+    const start = new Date(`${d.date}T${d.time}`);
+    if (isNaN(start.getTime())) {
+      setDraftMessage({ type: 'error', text: 'Enter a valid date and time.' });
+      return;
+    }
+    if (d.date < toDateKey(new Date())) {
+      setDraftMessage({ type: 'error', text: 'Pick today or a future date.' });
+      return;
+    }
+    const connected = googleReady();
+    if (d.type === 'meet' && !connected && !d.manualMeetLink.trim()) {
+      setDraftMessage({
+        type: 'error',
+        text: 'Connect Google Calendar to create the Meet link automatically, or paste an existing Meet link.'
+      });
+      return;
+    }
+
+    const end = new Date(start.getTime() + (d.type === 'meet' ? d.duration : 30) * 60000);
+    try {
+      setCalendarBusy(true);
+      let meetLink = d.manualMeetLink.trim();
+      let googleEventId = null;
+      let googleHtmlLink = '';
+
+      if (d.type === 'meet' && connected) {
+        const created = await createGoogleMeetEvent({
+          token: googleAccess.token,
+          summary: `Feedback session - ${c.name}`,
+          description: 'Scheduled with CoachFlow.',
+          start,
+          end,
+          attendeeEmail: c.email
+        });
+        meetLink = created.meetLink || meetLink;
+        googleEventId = created.eventId;
+        googleHtmlLink = created.htmlLink;
+      }
+
+      const fill = (text) => text.split('{{MEET_LINK}}').join(meetLink || '(Google Meet link to follow)');
+      const eventRef = await addDoc(collection(db, 'calendarEvents'), {
+        coachId: user.uid,
+        clientId: c.id,
+        clientName: c.name,
+        type: d.type,
+        title: `Feedback: ${c.name}`,
+        startAt: start,
+        endAt: end,
+        dateKey: d.date,
+        duration: d.type === 'meet' ? d.duration : null,
+        meetLink,
+        googleEventId,
+        googleHtmlLink,
+        status: 'scheduled',
+        createdAt: serverTimestamp()
+      });
+
+      const base = {
+        coachId: user.uid,
+        clientId: c.id,
+        calendarEventId: eventRef.id,
+        fromName: currentCoachName(),
+        replyTo: user.email || '',
+        status: 'scheduled',
+        recurring: false,
+        createdAt: serverTimestamp()
+      };
+
+      let clientEmailId = null;
+      if (d.sendClientEmail && c.email) {
+        const ref = await addDoc(collection(db, 'scheduledEmails'), {
+          ...base,
+          kind: 'feedback',
+          audience: 'client',
+          toPreview: c.email,
+          sendOn: d.date,
+          subject: d.clientSubject,
+          body: fill(d.clientBody)
+        });
+        clientEmailId = ref.id;
+      }
+
+      let remindOn = addDaysKey(d.date, -d.remindDays);
+      const todayKey = toDateKey(new Date());
+      if (remindOn < todayKey) remindOn = todayKey;
+      const reminderRef = await addDoc(collection(db, 'scheduledEmails'), {
+        ...base,
+        kind: 'coach-reminder',
+        audience: 'coach',
+        toPreview: user.email || '',
+        sendOn: remindOn,
+        subject: d.coachSubject,
+        body: fill(d.coachBody)
+      });
+
+      await updateDoc(eventRef, { clientEmailId, reminderEmailId: reminderRef.id });
+      await fetchCalendar(user.uid);
+      setScheduleDraft(null);
+      setCalendarNotice({
+        type: 'success',
+        text: `Feedback with ${c.name} added for ${formatWhen(d.date, d.time)}.`
+      });
+    } catch (error) {
+      console.error('Error scheduling feedback:', error);
+      if (error.message === 'GOOGLE_AUTH_EXPIRED') {
+        setGoogleAccess(null);
+        setDraftMessage({ type: 'error', text: 'Your Google connection expired. Connect again and save.' });
+      } else {
+        setDraftMessage({ type: 'error', text: `Could not schedule this: ${error.message}` });
+      }
+    } finally {
+      setCalendarBusy(false);
+    }
+  };
+
+  const handleMarkEventDone = async (ev) => {
+    try {
+      setCalendarBusy(true);
+      await updateDoc(doc(db, 'calendarEvents', ev.id), { status: 'done' });
+      await fetchCalendar(user.uid);
+      setSelectedEventId(null);
+    } catch (error) {
+      console.error('Error updating event:', error);
+    } finally {
+      setCalendarBusy(false);
+    }
+  };
+
+  const handleDeleteEvent = async (ev) => {
+    if (!window.confirm('Delete this calendar entry? Emails that have not been sent yet will be cancelled.')) return;
+    try {
+      setCalendarBusy(true);
+      let googleNote = '';
+      if (ev.googleEventId) {
+        if (googleReady()) {
+          try {
+            await deleteGoogleEvent({ token: googleAccess.token, eventId: ev.googleEventId });
+          } catch (err) {
+            googleNote = ' The Google Calendar event could not be removed - delete it in Google Calendar.';
+          }
+        } else {
+          googleNote = ' The Google Calendar event stays until you delete it in Google Calendar.';
+        }
+      }
+      const linked = outbox.filter((m) => m.calendarEventId === ev.id && m.status === 'scheduled');
+      await Promise.all(linked.map((m) => updateDoc(doc(db, 'scheduledEmails', m.id), { status: 'cancelled' })));
+      await deleteDoc(doc(db, 'calendarEvents', ev.id));
+      await fetchCalendar(user.uid);
+      setSelectedEventId(null);
+      setCalendarNotice({ type: 'success', text: `Calendar entry deleted.${googleNote}` });
+    } catch (error) {
+      console.error('Error deleting event:', error);
+      setCalendarNotice({ type: 'error', text: 'Could not delete the entry. Try again.' });
+    } finally {
+      setCalendarBusy(false);
+    }
+  };
+
+  // ---- Opt-in automations (switched on by the coach, with a consent confirmation) ----
+  const optInSendOn = (kind, client) => {
+    if (kind === 'birthday') return nextBirthdayKey(client.dateOfBirth);
+    if (kind === 'christmas') return nextChristmasKey();
+    return toDateKey(new Date());
+  };
+
+  const buildOptInTexts = (kind, c) => {
+    const coachName = currentCoachName();
+    if (kind === 'birthday') return buildBirthdayEmail({ coachName, client: c });
+    if (kind === 'christmas') return buildChristmasEmail({ coachName, client: c });
+    const partner = PARTNERS.find((p) => p.id === kind);
+    return buildPartnerEmail({ coachName, client: c, partner });
+  };
+
+  const openOptIn = (clientId, kind, enable) => {
+    const c = getClientView(clientId);
+    if (!c) return;
+    const texts = enable ? buildOptInTexts(kind, c) : { subject: '', body: '' };
+    setOptInDraft({ clientId, kind, enable, subject: texts.subject, body: texts.body, confirmed: false, message: null });
+    setEmailEditing(false);
+  };
+
+  const handleOptInSave = async () => {
+    const d = optInDraft;
+    if (!d) return;
+    const c = getClientView(d.clientId);
+    if (!c) return;
+    const isPartner = d.kind !== 'birthday' && d.kind !== 'christmas';
+    const mailKind = isPartner ? 'partner' : d.kind;
+    const fail = (text) => setOptInDraft((prev) => (prev ? { ...prev, message: { type: 'error', text } } : prev));
+
+    if (d.enable) {
+      if (!d.confirmed) {
+        fail('Please confirm that the client has agreed to receive this.');
+        return;
+      }
+      if (!c.email) {
+        fail('This client has no email address on file yet.');
+        return;
+      }
+      if (d.kind === 'birthday' && !c.dateOfBirth) {
+        fail('Add the client date of birth first.');
+        return;
+      }
+    }
+
+    try {
+      setCalendarBusy(true);
+      const pending = outbox.filter(
+        (m) =>
+          m.clientId === c.id &&
+          m.kind === mailKind &&
+          m.status === 'scheduled' &&
+          (!isPartner || m.partnerId === d.kind)
+      );
+
+      if (!d.enable) {
+        await Promise.all(pending.map((m) => updateDoc(doc(db, 'scheduledEmails', m.id), { status: 'cancelled' })));
+        await updateDoc(doc(db, 'clients', c.id), {
+          [`optIns.${d.kind}`]: { enabled: false, updatedAt: serverTimestamp() }
+        });
+      } else {
+        await updateDoc(doc(db, 'clients', c.id), {
+          [`optIns.${d.kind}`]: {
+            enabled: true,
+            confirmedByCoach: true,
+            confirmedAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          }
+        });
+        const alreadySent =
+          isPartner &&
+          outbox.some((m) => m.clientId === c.id && m.kind === 'partner' && m.partnerId === d.kind && m.status === 'sent');
+        if (pending.length === 0 && !alreadySent) {
+          await addDoc(collection(db, 'scheduledEmails'), {
+            coachId: user.uid,
+            clientId: c.id,
+            kind: mailKind,
+            partnerId: isPartner ? d.kind : null,
+            audience: 'client',
+            fromName: currentCoachName(),
+            replyTo: user.email || '',
+            toPreview: c.email,
+            sendOn: optInSendOn(d.kind, c),
+            recurring: d.kind === 'birthday' || d.kind === 'christmas',
+            subject: d.subject,
+            body: d.body,
+            status: 'scheduled',
+            createdAt: serverTimestamp()
+          });
+        }
+      }
+
+      await fetchCoachData(user.uid);
+      await fetchCalendar(user.uid);
+      setOptInDraft(null);
+    } catch (error) {
+      console.error('Error saving opt-in:', error);
+      fail('Could not save this. Try again.');
+    } finally {
+      setCalendarBusy(false);
+    }
+  };
+
+  const handleSaveDob = async (e, c) => {
+    e.preventDefault();
+    const dob = String(new FormData(e.target).get('dob') || '');
+    try {
+      setCalendarBusy(true);
+      await updateDoc(doc(db, 'clients', c.id), { dateOfBirth: dob || null });
+      const pending = outbox.filter((m) => m.clientId === c.id && m.kind === 'birthday' && m.status === 'scheduled');
+      await Promise.all(
+        pending.map((m) =>
+          dob
+            ? updateDoc(doc(db, 'scheduledEmails', m.id), { sendOn: nextBirthdayKey(dob) })
+            : updateDoc(doc(db, 'scheduledEmails', m.id), { status: 'cancelled' })
+        )
+      );
+      await fetchCoachData(user.uid);
+      await fetchCalendar(user.uid);
+      setCalendarNotice({ type: 'success', text: 'Date of birth saved.' });
+    } catch (error) {
+      console.error('Error saving date of birth:', error);
+      setCalendarNotice({ type: 'error', text: 'Could not save the date of birth.' });
+    } finally {
+      setCalendarBusy(false);
+    }
+  };
+
+  // ---- Programme status ----
+  const handleSetProgramme = async (c, completed) => {
+    const text = completed
+      ? `Mark ${c.name}'s programme as completed? Their upcoming feedback sessions and reminders will be cancelled. Google Calendar events are not removed.`
+      : `Reopen ${c.name}'s programme?`;
+    if (!window.confirm(text)) return;
+    try {
+      setCalendarBusy(true);
+      await updateDoc(
+        doc(db, 'clients', c.id),
+        completed
+          ? { programmeStatus: 'completed', completedAt: serverTimestamp() }
+          : { programmeStatus: 'active', completedAt: null }
+      );
+      if (completed) {
+        const events = calendarEvents.filter((ev) => ev.clientId === c.id && ev.status === 'scheduled');
+        const mails = outbox.filter(
+          (m) => m.clientId === c.id && m.status === 'scheduled' && (m.kind === 'feedback' || m.kind === 'coach-reminder')
+        );
+        await Promise.all([
+          ...events.map((ev) => updateDoc(doc(db, 'calendarEvents', ev.id), { status: 'cancelled' })),
+          ...mails.map((m) => updateDoc(doc(db, 'scheduledEmails', m.id), { status: 'cancelled' }))
+        ]);
+      }
+      await fetchCoachData(user.uid);
+      await fetchCalendar(user.uid);
+    } catch (error) {
+      console.error('Error updating programme:', error);
+    } finally {
+      setCalendarBusy(false);
+    }
+  };
+
+  // ---- Plans: the free plan needs no card, paid plans go through checkout ----
+  const handleSelectPlan = async (plan) => {
+    if (plan.price > 0) {
+      openCheckout(plan.id);
+      return;
+    }
+    if (!window.confirm(`Switch to the ${plan.name} plan?`)) return;
+    try {
+      setBillingBusy(true);
+      await setDoc(doc(db, 'subscriptions', user.uid), {
+        coachId: user.uid,
+        planId: plan.id,
+        planName: plan.name,
+        price: 0,
+        currency: 'EUR',
+        status: 'active',
+        methodId: null,
+        methodLabel: 'No payment needed',
+        startedAt: serverTimestamp(),
+        nextBillingDate: null,
+        mode: 'demo'
+      });
+      await fetchBilling(user.uid);
+    } catch (error) {
+      console.error('Error switching plan:', error);
+    } finally {
+      setBillingBusy(false);
+    }
+  };
+
   if (!user) {
     return (
       <div className="login-container">
@@ -1572,26 +2379,67 @@ function App() {
 
   if (userRole === 'coach') {
     const decorated = clients
-      .map((c) => {
-        const data = clientData[c.id] || { profile: null, checkIns: [] };
-        return {
-          ...c,
-          accountStatus: getAccountStatus(c),
-          profile: data.profile,
-          checkIns: data.checkIns,
-          lastCheckIn: getLastCheckInDate(data.checkIns),
-          level: getActivityLevel(c, data.checkIns),
-          stats: buildClientStats(data.profile, data.checkIns)
-        };
-      })
+      .map((c) => decorateClient(c, clientData))
       .sort((a, b) => LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level] || (a.name || '').localeCompare(b.name || ''));
 
     const coachName = coachProfile?.displayName || user.displayName || user.email;
     const sidebarClients = [...decorated].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     const selectedClient = decorated.find((c) => c.id === selectedClientId);
     const activeTop = ['add-client', 'client-detail'].includes(currentPage) ? 'clients' : currentPage;
-    const activeCount = decorated.filter((c) => c.accountStatus === 'active').length;
-    const pendingCount = decorated.length - activeCount;
+    const activeCount = decorated.filter((c) => c.accountStatus === 'active' && c.level !== 'completed').length;
+    const pendingCount = decorated.filter((c) => c.accountStatus === 'pending').length;
+    const inactiveClients = decorated
+      .filter((c) => c.inactiveDays != null)
+      .sort((a, b) => b.inactiveDays - a.inactiveDays);
+    const completedClients = decorated.filter((c) => c.level === 'completed');
+    const schedulable = decorated.filter((c) => c.accountStatus === 'active' && c.level !== 'completed');
+    const googleOk = googleReady();
+    const todayKey = toDateKey(new Date());
+    const startMs = (ev) => toDate(ev.startAt)?.getTime() || 0;
+    const monthGrid = buildMonthGrid(calendarMonth);
+    const eventsByDay = {};
+    calendarEvents
+      .filter((ev) => ev.status !== 'cancelled')
+      .sort((a, b) => startMs(a) - startMs(b))
+      .forEach((ev) => {
+        if (!eventsByDay[ev.dateKey]) eventsByDay[ev.dateKey] = [];
+        eventsByDay[ev.dateKey].push(ev);
+      });
+    const upcomingEvents = calendarEvents
+      .filter((ev) => ev.status === 'scheduled' && ev.dateKey >= todayKey)
+      .sort((a, b) => startMs(a) - startMs(b))
+      .slice(0, 8);
+    const selectedEvent = calendarEvents.find((ev) => ev.id === selectedEventId);
+    const draftClient = scheduleDraft ? decorated.find((c) => c.id === scheduleDraft.clientId) : null;
+    const optInClient = optInDraft ? decorated.find((c) => c.id === optInDraft.clientId) : null;
+
+    const optInRows = [
+      { kind: 'birthday', label: 'Birthday wishes', desc: 'A personal birthday message every year.', icon: 'gift' },
+      { kind: 'christmas', label: 'Christmas wishes', desc: 'A Christmas greeting on 24 December every year.', icon: 'star' },
+      ...PARTNERS.map((p) => ({
+        kind: p.id,
+        label: p.name,
+        desc: `A one-time introduction to ${p.name} from you.`,
+        icon: 'mail'
+      }))
+    ];
+
+    const automationNote = (clientId, kind) => {
+      const isPartner = kind !== 'birthday' && kind !== 'christmas';
+      const mails = outbox.filter(
+        (m) => m.clientId === clientId && m.kind === (isPartner ? 'partner' : kind) && (!isPartner || m.partnerId === kind)
+      );
+      const next = mails.find((m) => m.status === 'scheduled');
+      if (next) return `Next message: ${formatDate(parseDateKey(next.sendOn))}`;
+      const sent = mails
+        .filter((m) => m.status === 'sent')
+        .sort((a, b) => (toDate(b.sentAt)?.getTime() || 0) - (toDate(a.sentAt)?.getTime() || 0))[0];
+      return sent ? `Last sent ${formatDate(toDate(sent.sentAt))}` : '';
+    };
+
+    const previewFill = (text) =>
+      text.split('{{MEET_LINK}}').join(googleOk ? '[Google Meet link - created when you schedule]' : '[Google Meet link]');
+    const fromLabel = `${coachName} via CoachFlow`;
 
     const clientDate = (c) => toDate(c.createdAt) || new Date(0);
     const sparkCards = [
@@ -1610,7 +2458,7 @@ function App() {
         icon: 'check',
         tone: 'blue',
         series: cumulativeWeekly(
-          decorated.filter((c) => c.accountStatus === 'active').map((c) => toDate(c.acceptedAt) || clientDate(c))
+          decorated.filter((c) => c.accountStatus === 'active' && c.level !== 'completed').map((c) => toDate(c.acceptedAt) || clientDate(c))
         )
       },
       {
@@ -1629,16 +2477,19 @@ function App() {
 
     const subscription = billing.subscription;
     const currentPlanId = subscription && subscription.status === 'active' ? subscription.planId : null;
+    const subPlan = subscription ? PLANS.find((p) => p.id === subscription.planId) : null;
+    const subPrice = subPlan ? subPlan.price : subscription ? subscription.price : 0;
     const checkoutPlan = PLANS.find((p) => p.id === checkoutPlanId);
 
-    const renderClientCard = (c) => (
-      <button key={c.id} className={`activity-card level-${c.level}`} onClick={() => openClient(c.id)}>
+    const renderClientCard = (c, note) => (
+      <div key={c.id} className="card-wrap">
+      <button className={`activity-card level-${c.level}`} onClick={() => openClient(c.id)}>
         <div className="activity-card-head">
           <span className="client-avatar large">{initialOf(c.name)}</span>
           <div className="activity-card-title">
             <span className="activity-name">{c.name}</span>
             <span className="activity-sub">
-              {c.accountStatus === 'pending' ? 'Invite not redeemed yet' : describeLastCheckIn(c.lastCheckIn)}
+              {note || (c.accountStatus === 'pending' ? 'Invite not redeemed yet' : describeLastCheckIn(c.lastCheckIn))}
             </span>
           </div>
           <span className={`level-pill ${c.level}`}>{ACTIVITY_META[c.level].label}</span>
@@ -1667,6 +2518,12 @@ function App() {
           </div>
         )}
       </button>
+      {c.accountStatus === 'active' && c.level !== 'completed' && (
+        <button className="card-action" onClick={() => openSchedule(c.id)}>
+          <Icon name="calendar" size={14} /> Add feedback to calendar
+        </button>
+      )}
+      </div>
     );
 
     const renderLevelCard = (level) => {
@@ -1737,6 +2594,14 @@ function App() {
             >
               <Icon name="dashboard" />
               <span className="nav-label">Dashboard</span>
+            </button>
+            <button
+              className={`nav-item ${currentPage === 'calendar' ? 'active' : ''}`}
+              onClick={() => goTo('calendar')}
+              title="Calendar"
+            >
+              <Icon name="calendar" />
+              <span className="nav-label">Calendar</span>
             </button>
             <button
               className={`nav-item ${currentPage === 'chat' ? 'active' : ''}`}
@@ -1904,7 +2769,7 @@ function App() {
                   {decorated.length === 0 ? (
                     <p className="empty-state">No clients yet. Add your first client to get started.</p>
                   ) : (
-                    <div className="activity-grid">{decorated.map(renderClientCard)}</div>
+                    <div className="activity-grid">{decorated.map((c) => renderClientCard(c))}</div>
                   )}
                 </section>
               </div>
@@ -1912,29 +2777,31 @@ function App() {
 
             {currentPage === 'clients' && (
               <div className="dashboard-view">
-                <div className="page-header page-header-row">
-                  <div>
+                <div className="clients-bar">
+                  <div className="clients-bar-left">
                     <h2>Client List</h2>
                     <p>{decorated.length} {decorated.length === 1 ? 'client' : 'clients'} in total</p>
                   </div>
-                  <div className="page-header-actions">
-                    <div className="seg" role="group" aria-label="Client view">
-                      {[
-                        { id: 'overview', label: 'Overview', icon: 'grid' },
-                        { id: 'list', label: 'List', icon: 'list' },
-                        { id: 'segments', label: 'Segments', icon: 'segments' }
-                      ].map((view) => (
-                        <button
-                          key={view.id}
-                          className={`seg-btn ${clientView === view.id ? 'active' : ''}`}
-                          aria-pressed={clientView === view.id}
-                          onClick={() => setClientView(view.id)}
-                        >
-                          <Icon name={view.icon} size={16} />
-                          <span>{view.label}</span>
-                        </button>
-                      ))}
-                    </div>
+                  <div className="seg clients-seg" role="group" aria-label="Client view">
+                    {CLIENT_VIEWS.map((view) => (
+                      <button
+                        key={view.id}
+                        className={`seg-btn ${clientView === view.id ? 'active' : ''}`}
+                        aria-pressed={clientView === view.id}
+                        onClick={() => setClientView(view.id)}
+                      >
+                        <Icon name={view.icon} size={16} />
+                        <span>{view.label}</span>
+                        {view.id === 'inactive' && inactiveClients.length > 0 && (
+                          <span className="seg-count">{inactiveClients.length}</span>
+                        )}
+                        {view.id === 'completed' && completedClients.length > 0 && (
+                          <span className="seg-count">{completedClients.length}</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="clients-bar-right">
                     <button className="btn-primary" onClick={() => goTo('add-client')}>+ Add Client</button>
                   </div>
                 </div>
@@ -1945,7 +2812,7 @@ function App() {
                   </section>
                 ) : (
                   <>
-                    {clientView === 'overview' && <div className="activity-grid">{decorated.map(renderClientCard)}</div>}
+                    {clientView === 'overview' && <div className="activity-grid">{decorated.map((c) => renderClientCard(c))}</div>}
 
                     {clientView === 'list' && (
                       <section className="section">
@@ -1973,8 +2840,44 @@ function App() {
 
                     {clientView === 'segments' && (
                       <div className="analytics-grid segments-grid">
-                        {['green', 'yellow', 'red', 'pending'].map(renderLevelCard)}
+                        {['green', 'yellow', 'red', 'pending', 'completed'].map(renderLevelCard)}
                       </div>
+                    )}
+
+                    {clientView === 'inactive' && (
+                      <>
+                        <p className="view-hint">
+                          Clients with no check-in for {INACTIVE_DAYS} days or more. A short feedback session is often all it takes to bring them back.
+                        </p>
+                        {inactiveClients.length === 0 ? (
+                          <section className="section">
+                            <p className="empty-state">No inactive clients. Everyone has checked in within the last {INACTIVE_DAYS} days.</p>
+                          </section>
+                        ) : (
+                          <div className="activity-grid">
+                            {inactiveClients.map((c) => renderClientCard(c, `Inactive for ${c.inactiveDays} days`))}
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    {clientView === 'completed' && (
+                      <>
+                        <p className="view-hint">
+                          Clients whose programme you have marked as completed. Open a client to reopen their programme.
+                        </p>
+                        {completedClients.length === 0 ? (
+                          <section className="section">
+                            <p className="empty-state">No completed programmes yet. Mark a programme as completed from the client page.</p>
+                          </section>
+                        ) : (
+                          <div className="activity-grid">
+                            {completedClients.map((c) =>
+                              renderClientCard(c, `Completed ${formatDate(toDate(c.completedAt))}`)
+                            )}
+                          </div>
+                        )}
+                      </>
                     )}
                   </>
                 )}
@@ -1991,6 +2894,131 @@ function App() {
                   </p>
                 </div>
                 <div className="analytics-grid">{['green', 'yellow', 'red'].map(renderLevelCard)}</div>
+              </div>
+            )}
+
+            {currentPage === 'calendar' && (
+              <div className="dashboard-view">
+                <div className="page-header page-header-row">
+                  <div>
+                    <h2>Calendar</h2>
+                    <p>Feedback sessions and reminders for your clients.</p>
+                  </div>
+                  <div className="page-header-actions">
+                    {googleOk ? (
+                      <span className="badge active">Google connected</span>
+                    ) : (
+                      <button className="btn-secondary" onClick={handleConnectGoogle}>Connect Google Calendar</button>
+                    )}
+                    <button className="btn-primary" onClick={() => openSchedule('')}>+ Schedule feedback</button>
+                  </div>
+                </div>
+
+                {calendarNotice && <p className={`form-message ${calendarNotice.type}`}>{calendarNotice.text}</p>}
+
+                <section className="section calendar-section">
+                  <div className="cal-toolbar">
+                    <div className="cal-nav">
+                      <button
+                        className="btn-icon"
+                        aria-label="Previous month"
+                        onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}
+                      >
+                        <Icon name="back" size={16} />
+                      </button>
+                      <button
+                        className="btn-icon"
+                        aria-label="Next month"
+                        onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}
+                      >
+                        <Icon name="expand" size={16} />
+                      </button>
+                      <h3 className="cal-title">
+                        {calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
+                      </h3>
+                    </div>
+                    <button
+                      className="btn-secondary"
+                      onClick={() => {
+                        const n = new Date();
+                        setCalendarMonth(new Date(n.getFullYear(), n.getMonth(), 1));
+                      }}
+                    >
+                      Today
+                    </button>
+                  </div>
+
+                  <div className="cal-grid cal-weekdays">
+                    {WEEKDAYS.map((w) => (
+                      <div key={w}>{w}</div>
+                    ))}
+                  </div>
+                  <div className="cal-grid">
+                    {monthGrid.map((cell) => {
+                      const dayEvents = eventsByDay[cell.key] || [];
+                      const birthdays = decorated.filter(
+                        (c) => c.dateOfBirth && c.dateOfBirth.slice(5) === cell.key.slice(5)
+                      );
+                      return (
+                        <div
+                          key={cell.key}
+                          className={`cal-cell ${cell.inMonth ? '' : 'muted'} ${cell.key === todayKey ? 'today' : ''}`}
+                        >
+                          <span className="cal-day">{cell.date.getDate()}</span>
+                          {dayEvents.slice(0, 3).map((ev) => (
+                            <button
+                              key={ev.id}
+                              className={`cal-chip ${ev.type} ${ev.status}`}
+                              onClick={() => setSelectedEventId(ev.id)}
+                              title={`${ev.clientName} - ${formatTime(toDate(ev.startAt))}`}
+                            >
+                              <Icon name={ev.type === 'meet' ? 'video' : 'mail'} size={12} />
+                              <span>{formatTime(toDate(ev.startAt))} {ev.clientName}</span>
+                            </button>
+                          ))}
+                          {dayEvents.length > 3 && <span className="cal-more">+{dayEvents.length - 3} more</span>}
+                          {birthdays.map((c) => (
+                            <span key={c.id} className="cal-chip birthday" title={`${c.name}'s birthday`}>
+                              <Icon name="gift" size={12} />
+                              <span>{firstName(c.name)}</span>
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                <section className="section">
+                  <h3>Upcoming feedback</h3>
+                  {upcomingEvents.length === 0 ? (
+                    <p className="empty-state">
+                      Nothing scheduled yet. Use "Schedule feedback" or open a client and choose "Add feedback to calendar".
+                    </p>
+                  ) : (
+                    <ul className="upcoming-list">
+                      {upcomingEvents.map((ev) => (
+                        <li key={ev.id}>
+                          <button className="upcoming-item" onClick={() => setSelectedEventId(ev.id)}>
+                            <span className={`upcoming-icon ${ev.type}`}>
+                              <Icon name={ev.type === 'meet' ? 'video' : 'mail'} size={16} />
+                            </span>
+                            <span className="upcoming-main">
+                              <span className="activity-name">{ev.clientName}</span>
+                              <span className="activity-sub">
+                                {formatWhen(ev.dateKey, formatTime(toDate(ev.startAt)))}
+                              </span>
+                            </span>
+                            <span className="badge">{ev.type === 'meet' ? 'Google Meet' : 'Email'}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className="field-hint">
+                    Reminder and client emails are sent by a daily run, around 07:00 to 08:00 Estonian time.
+                  </p>
+                </section>
               </div>
             )}
 
@@ -2027,19 +3055,22 @@ function App() {
                     <div className="current-plan">
                       <div>
                         <div className="current-plan-name">
-                          {subscription.planName}
+                          {subPlan ? subPlan.name : subscription.planName}
                           <span className={`badge ${subscription.status === 'active' ? 'active' : 'pending'}`}>
                             {subscription.status === 'active' ? 'active' : 'cancelled'}
                           </span>
                         </div>
                         <p className="section-subtitle section-subtitle-tight">
-                          {formatMoney(subscription.price, subscription.currency)} per month, paid with {subscription.methodLabel}.
-                          {subscription.status === 'active'
-                            ? ` Next payment on ${formatDate(toDate(subscription.nextBillingDate))}.`
-                            : ` Access continues until ${formatDate(toDate(subscription.nextBillingDate))}.`}
+                          {subPrice === 0
+                            ? 'No payment needed. You can upgrade to Pro at any time.'
+                            : `${formatMoney(subPrice, subscription.currency)} per month, paid with ${subscription.methodLabel}.${
+                                subscription.status === 'active'
+                                  ? ` Next payment on ${formatDate(toDate(subscription.nextBillingDate))}.`
+                                  : ` Access continues until ${formatDate(toDate(subscription.nextBillingDate))}.`
+                              }`}
                         </p>
                       </div>
-                      {subscription.status === 'active' && (
+                      {subscription.status === 'active' && subPrice > 0 && (
                         <button className="btn-secondary" onClick={handleCancelSubscription} disabled={billingBusy}>
                           Cancel plan
                         </button>
@@ -2061,7 +3092,8 @@ function App() {
                         </div>
                         <p className="plan-tagline">{plan.tagline}</p>
                         <div className="plan-price">
-                          {formatMoney(plan.price)}<span> / month</span>
+                          {plan.price === 0 ? 'Free' : formatMoney(plan.price)}
+                          {plan.price > 0 && <span> / month</span>}
                         </div>
                         <ul className="plan-features">
                           {plan.features.map((f) => (
@@ -2071,7 +3103,7 @@ function App() {
                         <button
                           className={isCurrent ? 'btn-secondary' : 'btn-primary'}
                           disabled={isCurrent || billingBusy}
-                          onClick={() => openCheckout(plan.id)}
+                          onClick={() => handleSelectPlan(plan)}
                         >
                           {isCurrent ? 'Current plan' : currentPlanId ? `Switch to ${plan.name}` : `Choose ${plan.name}`}
                         </button>
@@ -2186,6 +3218,8 @@ function App() {
                   <Icon name="back" size={16} /> Back
                 </button>
 
+                {calendarNotice && <p className={`form-message ${calendarNotice.type}`}>{calendarNotice.text}</p>}
+
                 <div className="client-page-header">
                   <span className="client-avatar xlarge">{initialOf(selectedClient.name)}</span>
                   <div className="client-page-title">
@@ -2196,8 +3230,27 @@ function App() {
                       {selectedClient.accountStatus === 'active' && (
                         <span className="list-muted">{describeLastCheckIn(selectedClient.lastCheckIn)}</span>
                       )}
+                      {selectedClient.inactiveDays != null && (
+                        <span className="level-pill red">Inactive for {selectedClient.inactiveDays} days</span>
+                      )}
                     </div>
                   </div>
+                  {selectedClient.accountStatus === 'active' && (
+                    <div className="client-page-actions">
+                      {selectedClient.level !== 'completed' && (
+                        <button className="btn-secondary" onClick={() => openSchedule(selectedClient.id)}>
+                          <Icon name="calendar" size={16} /> Add feedback to calendar
+                        </button>
+                      )}
+                      <button
+                        className="btn-secondary"
+                        disabled={calendarBusy}
+                        onClick={() => handleSetProgramme(selectedClient, selectedClient.level !== 'completed')}
+                      >
+                        {selectedClient.level === 'completed' ? 'Reopen programme' : 'Mark programme completed'}
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {selectedClient.accountStatus === 'pending' && (
@@ -2329,6 +3382,94 @@ function App() {
                           })}
                         </div>
                       )}
+                    </section>
+                  </>
+                )}
+
+                {selectedClient.accountStatus === 'active' && (
+                  <>
+                    <section className="section">
+                      <div className="section-header">
+                        <div>
+                          <h3>Feedback and calendar</h3>
+                          <p className="section-subtitle section-subtitle-tight">
+                            Schedule a Google Meet 1-on-1 or an email feedback so you never miss it.
+                          </p>
+                        </div>
+                        {selectedClient.level !== 'completed' && (
+                          <button className="btn-primary" onClick={() => openSchedule(selectedClient.id)}>
+                            Add feedback to calendar
+                          </button>
+                        )}
+                      </div>
+                      {calendarEvents.filter((ev) => ev.clientId === selectedClient.id && ev.status === 'scheduled').length === 0 ? (
+                        <p className="empty-state">No feedback scheduled for {firstName(selectedClient.name)}.</p>
+                      ) : (
+                        <ul className="upcoming-list">
+                          {calendarEvents
+                            .filter((ev) => ev.clientId === selectedClient.id && ev.status === 'scheduled')
+                            .sort((a, b) => startMs(a) - startMs(b))
+                            .map((ev) => (
+                              <li key={ev.id}>
+                                <button className="upcoming-item" onClick={() => setSelectedEventId(ev.id)}>
+                                  <span className={`upcoming-icon ${ev.type}`}>
+                                    <Icon name={ev.type === 'meet' ? 'video' : 'mail'} size={16} />
+                                  </span>
+                                  <span className="upcoming-main">
+                                    <span className="activity-name">{formatWhen(ev.dateKey, formatTime(toDate(ev.startAt)))}</span>
+                                    <span className="activity-sub">{ev.type === 'meet' ? 'Google Meet 1-on-1' : 'Email feedback'}</span>
+                                  </span>
+                                </button>
+                              </li>
+                            ))}
+                        </ul>
+                      )}
+                    </section>
+
+                    <section className="section">
+                      <h3>Automated messages</h3>
+                      <p className="section-subtitle">
+                        Emails sent in your name. Switch one on only when {firstName(selectedClient.name)} has agreed to receive it.
+                      </p>
+
+                      <form className="dob-form" onSubmit={(e) => handleSaveDob(e, selectedClient)} key={`${selectedClient.id}-${selectedClient.dateOfBirth || ''}`}>
+                        <div className="form-group">
+                          <label>Date of birth</label>
+                          <input type="date" name="dob" defaultValue={selectedClient.dateOfBirth || ''} />
+                        </div>
+                        <button type="submit" className="btn-secondary" disabled={calendarBusy}>Save</button>
+                      </form>
+
+                      {!selectedClient.email && (
+                        <p className="form-message error">
+                          No email address on file for this client yet, so messages cannot be sent.
+                        </p>
+                      )}
+
+                      <ul className="automation-list">
+                        {optInRows.map((row) => {
+                          const on = !!selectedClient.optIns?.[row.kind]?.enabled;
+                          const note = automationNote(selectedClient.id, row.kind);
+                          return (
+                            <li key={row.kind} className="automation-row">
+                              <span className="automation-icon"><Icon name={row.icon} size={18} /></span>
+                              <div className="automation-text">
+                                <strong>{row.label}</strong>
+                                <small>{row.desc}{note ? ` ${note}.` : ''}</small>
+                              </div>
+                              <button
+                                className={`switch ${on ? 'on' : ''}`}
+                                role="switch"
+                                aria-checked={on}
+                                aria-label={row.label}
+                                onClick={() => openOptIn(selectedClient.id, row.kind, !on)}
+                              >
+                                <span className="switch-knob" />
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
                     </section>
                   </>
                 )}
@@ -2506,6 +3647,372 @@ function App() {
                   onClick={handleSubscribe}
                 >
                   {billingBusy ? 'Processing...' : `Pay ${formatMoney(checkoutPlan.price)} and subscribe`}
+                </button>
+              </div>
+            </div>
+          </Modal>
+        )}
+        {scheduleDraft && (
+          <Modal title="Add feedback to calendar" onClose={() => setScheduleDraft(null)} wide>
+            <div className="form">
+              <div className="form-group">
+                <label>Client</label>
+                <select value={scheduleDraft.clientId} onChange={(e) => updateDraft({ clientId: e.target.value })}>
+                  <option value="">Choose a client</option>
+                  {schedulable.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label>How will you give the feedback?</label>
+                <div className="seg">
+                  <button
+                    type="button"
+                    className={`seg-btn ${scheduleDraft.type === 'meet' ? 'active' : ''}`}
+                    onClick={() => updateDraft({ type: 'meet' })}
+                  >
+                    <Icon name="video" size={16} /><span>Google Meet 1-on-1</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`seg-btn ${scheduleDraft.type === 'email' ? 'active' : ''}`}
+                    onClick={() => updateDraft({ type: 'email' })}
+                  >
+                    <Icon name="mail" size={16} /><span>Email feedback</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="form-row three">
+                <div className="form-group">
+                  <label>Date</label>
+                  <input type="date" value={scheduleDraft.date} min={todayKey} onChange={(e) => updateDraft({ date: e.target.value })} />
+                </div>
+                <div className="form-group">
+                  <label>Time</label>
+                  <input type="time" value={scheduleDraft.time} onChange={(e) => updateDraft({ time: e.target.value })} />
+                </div>
+                {scheduleDraft.type === 'meet' && (
+                  <div className="form-group">
+                    <label>Length</label>
+                    <select value={scheduleDraft.duration} onChange={(e) => updateDraft({ duration: Number(e.target.value) })}>
+                      <option value={30}>30 minutes</option>
+                      <option value={45}>45 minutes</option>
+                      <option value={60}>60 minutes</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              {scheduleDraft.type === 'meet' && (
+                <div className="meet-box">
+                  {googleOk ? (
+                    <p className="meet-ok">
+                      <Icon name="check" size={16} />
+                      <span>
+                        Google Calendar is connected. The Meet link is created when you add this, and Google invites{' '}
+                        {draftClient ? draftClient.name : 'the client'}.
+                      </span>
+                    </p>
+                  ) : (
+                    <>
+                      <p>Connect Google Calendar to create the Meet link automatically.</p>
+                      <button type="button" className="btn-secondary" onClick={handleConnectGoogle}>
+                        Connect Google Calendar
+                      </button>
+                      <div className="form-group meet-manual">
+                        <label>Or paste an existing Meet link</label>
+                        <input
+                          type="url"
+                          value={scheduleDraft.manualMeetLink}
+                          onChange={(e) => updateDraft({ manualMeetLink: e.target.value })}
+                          placeholder="https://meet.google.com/..."
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Remind me</label>
+                  <select value={scheduleDraft.remindDays} onChange={(e) => updateDraft({ remindDays: Number(e.target.value) })}>
+                    <option value={0}>On the day</option>
+                    <option value={1}>1 day before</option>
+                    <option value={2}>2 days before</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Email to client</label>
+                  <label className="check-row">
+                    <input
+                      type="checkbox"
+                      checked={scheduleDraft.sendClientEmail && !!(draftClient && draftClient.email)}
+                      disabled={!draftClient || !draftClient.email}
+                      onChange={(e) => updateDraft({ sendClientEmail: e.target.checked })}
+                    />
+                    <span>
+                      {draftClient && !draftClient.email ? 'No email on file yet' : 'Send on the day'}
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              {draftClient && (
+                <div className="email-section">
+                  <div className="email-tabs" role="tablist">
+                    {scheduleDraft.sendClientEmail && draftClient.email && (
+                      <button
+                        role="tab"
+                        aria-selected={emailTab === 'client'}
+                        className={`range-tab ${emailTab === 'client' ? 'active' : ''}`}
+                        onClick={() => setEmailTab('client')}
+                      >
+                        Email to client
+                      </button>
+                    )}
+                    <button
+                      role="tab"
+                      aria-selected={!(scheduleDraft.sendClientEmail && draftClient.email) || emailTab === 'coach'}
+                      className={`range-tab ${!(scheduleDraft.sendClientEmail && draftClient.email) || emailTab === 'coach' ? 'active' : ''}`}
+                      onClick={() => setEmailTab('coach')}
+                    >
+                      Your reminder
+                    </button>
+                    <span className="email-tabs-spacer" />
+                    <button type="button" className="link-btn" onClick={() => setEmailEditing(!emailEditing)}>
+                      {emailEditing ? 'Show preview' : 'Edit text'}
+                    </button>
+                    <button
+                      type="button"
+                      className="link-btn"
+                      onClick={() => updateDraft({ edited: { client: false, coach: false } })}
+                    >
+                      Reset text
+                    </button>
+                  </div>
+
+                  {scheduleDraft.sendClientEmail && draftClient.email && emailTab === 'client' ? (
+                    emailEditing ? (
+                      <>
+                        <div className="form-group">
+                          <label>Subject</label>
+                          <input type="text" value={scheduleDraft.clientSubject} onChange={(e) => editDraftText('client', 'clientSubject', e.target.value)} />
+                        </div>
+                        <div className="form-group">
+                          <label>Message</label>
+                          <textarea rows="12" value={scheduleDraft.clientBody} onChange={(e) => editDraftText('client', 'clientBody', e.target.value)} />
+                        </div>
+                      </>
+                    ) : (
+                      <EmailPreview
+                        from={fromLabel}
+                        to={`${draftClient.name} <${draftClient.email}>`}
+                        replyTo={user.email}
+                        sendOn={formatDate(parseDateKey(scheduleDraft.date))}
+                        subject={scheduleDraft.clientSubject}
+                        body={previewFill(scheduleDraft.clientBody)}
+                      />
+                    )
+                  ) : emailEditing ? (
+                    <>
+                      <div className="form-group">
+                        <label>Subject</label>
+                        <input type="text" value={scheduleDraft.coachSubject} onChange={(e) => editDraftText('coach', 'coachSubject', e.target.value)} />
+                      </div>
+                      <div className="form-group">
+                        <label>Message</label>
+                        <textarea rows="10" value={scheduleDraft.coachBody} onChange={(e) => editDraftText('coach', 'coachBody', e.target.value)} />
+                      </div>
+                    </>
+                  ) : (
+                    <EmailPreview
+                      from="CoachFlow reminders"
+                      to={user.email}
+                      sendOn={formatDate(
+                        parseDateKey(
+                          addDaysKey(scheduleDraft.date, -scheduleDraft.remindDays) < todayKey
+                            ? todayKey
+                            : addDaysKey(scheduleDraft.date, -scheduleDraft.remindDays)
+                        )
+                      )}
+                      subject={scheduleDraft.coachSubject}
+                      body={previewFill(scheduleDraft.coachBody)}
+                    />
+                  )}
+                </div>
+              )}
+
+              {scheduleDraft.message && (
+                <p className={`form-message ${scheduleDraft.message.type}`}>{scheduleDraft.message.text}</p>
+              )}
+              <div className="modal-actions">
+                <button type="button" className="btn-secondary" onClick={() => setScheduleDraft(null)}>Cancel</button>
+                <button type="button" className="btn-primary" disabled={calendarBusy || !draftClient} onClick={handleScheduleSave}>
+                  {calendarBusy ? 'Adding...' : 'Add to calendar'}
+                </button>
+              </div>
+            </div>
+          </Modal>
+        )}
+
+        {selectedEvent && (
+          <Modal title="Feedback session" onClose={() => setSelectedEventId(null)}>
+            <dl className="event-facts">
+              <div><dt>Client</dt><dd>{selectedEvent.clientName}</dd></div>
+              <div>
+                <dt>When</dt>
+                <dd>{formatWhen(selectedEvent.dateKey, formatTime(toDate(selectedEvent.startAt)))}</dd>
+              </div>
+              <div>
+                <dt>Type</dt>
+                <dd>{selectedEvent.type === 'meet' ? 'Google Meet 1-on-1' : 'Email feedback'}</dd>
+              </div>
+              {selectedEvent.meetLink && (
+                <div>
+                  <dt>Meet link</dt>
+                  <dd>
+                    <a href={selectedEvent.meetLink} target="_blank" rel="noopener noreferrer">{selectedEvent.meetLink}</a>
+                  </dd>
+                </div>
+              )}
+              {selectedEvent.googleHtmlLink && (
+                <div>
+                  <dt>Google Calendar</dt>
+                  <dd>
+                    <a href={selectedEvent.googleHtmlLink} target="_blank" rel="noopener noreferrer">Open the event</a>
+                  </dd>
+                </div>
+              )}
+              <div><dt>Status</dt><dd className="capitalize">{selectedEvent.status}</dd></div>
+              <div>
+                <dt>Email to client</dt>
+                <dd>
+                  {selectedEvent.clientEmailId
+                    ? describeEmailStatus(outbox.find((m) => m.id === selectedEvent.clientEmailId))
+                    : 'Not sending an email'}
+                </dd>
+              </div>
+              <div>
+                <dt>Your reminder</dt>
+                <dd>{describeEmailStatus(outbox.find((m) => m.id === selectedEvent.reminderEmailId))}</dd>
+              </div>
+            </dl>
+            <div className="modal-actions modal-actions-spread">
+              <button
+                className="btn-danger"
+                disabled={calendarBusy}
+                onClick={() => handleDeleteEvent(selectedEvent)}
+              >
+                Delete
+              </button>
+              <div className="modal-actions-group">
+                <button
+                  className="btn-secondary"
+                  onClick={() => {
+                    const id = selectedEvent.clientId;
+                    setSelectedEventId(null);
+                    openClient(id);
+                  }}
+                >
+                  Open client
+                </button>
+                {selectedEvent.status === 'scheduled' && (
+                  <button className="btn-primary" disabled={calendarBusy} onClick={() => handleMarkEventDone(selectedEvent)}>
+                    Mark as done
+                  </button>
+                )}
+              </div>
+            </div>
+          </Modal>
+        )}
+
+        {optInDraft && optInClient && (
+          <Modal
+            title={`${optInDraft.enable ? 'Turn on' : 'Turn off'}: ${optInRows.find((r) => r.kind === optInDraft.kind)?.label}`}
+            onClose={() => setOptInDraft(null)}
+            wide
+          >
+            <div className="form">
+              {optInDraft.enable ? (
+                <>
+                  <p className="section-subtitle">
+                    This email goes to {optInClient.name}
+                    {optInClient.email ? ` (${optInClient.email})` : ''}.{' '}
+                    {optInDraft.kind === 'birthday' && optInClient.dateOfBirth &&
+                      `It sends on ${formatDate(parseDateKey(nextBirthdayKey(optInClient.dateOfBirth)))}, then every year.`}
+                    {optInDraft.kind === 'christmas' &&
+                      `It sends on ${formatDate(parseDateKey(nextChristmasKey()))}, then every year.`}
+                    {optInDraft.kind !== 'birthday' && optInDraft.kind !== 'christmas' &&
+                      'It sends once, in the next daily run.'}
+                  </p>
+
+                  <div className="email-tabs">
+                    <span className="email-tabs-spacer" />
+                    <button type="button" className="link-btn" onClick={() => setEmailEditing(!emailEditing)}>
+                      {emailEditing ? 'Show preview' : 'Edit text'}
+                    </button>
+                  </div>
+
+                  {emailEditing ? (
+                    <>
+                      <div className="form-group">
+                        <label>Subject</label>
+                        <input
+                          type="text"
+                          value={optInDraft.subject}
+                          onChange={(e) => setOptInDraft({ ...optInDraft, subject: e.target.value })}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Message</label>
+                        <textarea
+                          rows="12"
+                          value={optInDraft.body}
+                          onChange={(e) => setOptInDraft({ ...optInDraft, body: e.target.value })}
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <EmailPreview
+                      from={fromLabel}
+                      to={`${optInClient.name} <${optInClient.email || 'no email on file'}>`}
+                      replyTo={user.email}
+                      subject={optInDraft.subject}
+                      body={optInDraft.body}
+                    />
+                  )}
+
+                  <label className="check-row consent-row">
+                    <input
+                      type="checkbox"
+                      checked={optInDraft.confirmed}
+                      onChange={(e) => setOptInDraft({ ...optInDraft, confirmed: e.target.checked, message: null })}
+                    />
+                    <span>I confirm that {optInClient.name} has agreed to receive this message from me.</span>
+                  </label>
+                </>
+              ) : (
+                <p className="section-subtitle">
+                  Stop this message for {optInClient.name}? Anything not yet sent will be cancelled.
+                </p>
+              )}
+
+              {optInDraft.message && (
+                <p className={`form-message ${optInDraft.message.type}`}>{optInDraft.message.text}</p>
+              )}
+              <div className="modal-actions">
+                <button type="button" className="btn-secondary" onClick={() => setOptInDraft(null)}>Cancel</button>
+                <button
+                  type="button"
+                  className={optInDraft.enable ? 'btn-primary' : 'btn-danger'}
+                  disabled={calendarBusy}
+                  onClick={handleOptInSave}
+                >
+                  {calendarBusy ? 'Saving...' : optInDraft.enable ? 'Turn on' : 'Turn off'}
                 </button>
               </div>
             </div>
