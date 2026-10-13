@@ -1,4 +1,4 @@
-// Shared helpers for the CoachFlow serverless functions.
+// Shared helpers for the BodUp serverless functions.
 // Files that start with an underscore are not exposed as endpoints by Vercel.
 
 const admin = require('firebase-admin');
@@ -33,7 +33,7 @@ function toHtml(text) {
 }
 
 async function sendWithResend({ to, subject, text, fromName, replyTo }) {
-  const safeName = String(fromName || 'CoachFlow').replace(/[<>"]/g, '').slice(0, 60);
+  const safeName = String(fromName || 'BodUp').replace(/[<>"]/g, '').slice(0, 60);
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -41,7 +41,7 @@ async function sendWithResend({ to, subject, text, fromName, replyTo }) {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      from: `${safeName} via CoachFlow <${process.env.FROM_EMAIL}>`,
+      from: `${safeName} via BodUp <${process.env.FROM_EMAIL}>`,
       to: [to],
       subject,
       text,
