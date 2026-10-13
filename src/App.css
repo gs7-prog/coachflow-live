@@ -3213,3 +3213,730 @@ textarea:focus-visible {
     display: none;
   }
 }
+
+/* =========================================================================
+   Admin panel and suspended page
+   ========================================================================= */
+
+.attention-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  margin-bottom: 24px;
+  transition: box-shadow 0.2s, transform 0.2s;
+}
+
+.attention-card:hover {
+  box-shadow: var(--shadow);
+  transform: translateY(-2px);
+}
+
+.attention-card strong {
+  display: block;
+  font-size: 16px;
+}
+
+.attention-card small {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--text-faint);
+}
+
+.attention-count {
+  min-width: 52px;
+  height: 52px;
+  padding: 0 12px;
+  border-radius: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--green-bg);
+  color: var(--green-ink);
+  font-size: 22px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.attention-count.alert {
+  background: var(--red-bg);
+  color: var(--red-ink);
+}
+
+.admin-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.admin-search {
+  min-width: 220px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 14px;
+}
+
+.admin-table td {
+  vertical-align: middle;
+}
+
+.cell-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.cell-sub.error-text {
+  color: var(--red-ink);
+}
+
+.cell-wide {
+  min-width: 180px;
+  max-width: 320px;
+}
+
+.row-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.btn-small {
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 10px;
+}
+
+.status-pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--pending-bg);
+  color: var(--pending-ink);
+}
+
+.status-pill.active,
+.status-pill.sent {
+  background: var(--green-bg);
+  color: var(--green-ink);
+}
+
+.status-pill.scheduled {
+  background: var(--blue-soft);
+  color: var(--blue-ink);
+}
+
+.status-pill.suspended,
+.status-pill.expired {
+  background: var(--yellow-bg);
+  color: var(--yellow-ink);
+}
+
+.status-pill.closed,
+.status-pill.failed {
+  background: var(--red-bg);
+  color: var(--red-ink);
+}
+
+.msg-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.msg-card {
+  padding: 18px 20px;
+  background: var(--surface);
+  border-left: 4px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow-sm);
+}
+
+.msg-card.new {
+  border-left-color: var(--primary);
+}
+
+.msg-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.msg-top h4 {
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.msg-meta {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--text-faint);
+}
+
+.msg-body {
+  margin: 12px 0;
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.msg-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.suspended-card .form {
+  text-align: left;
+  margin-top: 8px;
+}
+
+.suspended-card .btn-primary {
+  width: 100%;
+}
+
+.suspended-signed-in {
+  margin: 18px 0 12px;
+  font-size: 13px;
+  color: var(--text-faint);
+}
+
+/* =========================================================================
+   Brand and public landing page
+   ========================================================================= */
+.brand-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--primary);
+  font-weight: 800;
+  line-height: 1;
+}
+
+.brand-mark img {
+  display: block;
+  object-fit: contain;
+}
+
+.brand-name {
+  font-size: 1.15em;
+  letter-spacing: -0.01em;
+  color: var(--primary);
+}
+
+.sidebar-header h1 .brand-mark {
+  font-size: 22px;
+}
+
+.auth-brand {
+  margin-bottom: 14px;
+}
+
+
+.landing {
+  min-height: 100vh;
+  color: var(--text);
+}
+
+.landing-nav {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 20px;
+  height: 72px;
+  padding: 0 clamp(16px, 4vw, 48px);
+  background: var(--surface);
+  box-shadow: 0 1px 0 var(--border);
+}
+
+.landing-brand {
+  text-decoration: none;
+}
+
+.landing-links {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+
+.landing-links a {
+  padding: 8px 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: background 0.2s, color 0.2s;
+}
+
+.landing-links a:hover {
+  background: var(--panel);
+  color: var(--primary);
+}
+
+.landing-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.landing-actions .btn-secondary,
+.landing-actions .btn-primary {
+  padding: 9px 16px;
+  white-space: nowrap;
+}
+
+.landing-actions .menu-popover {
+  right: auto;
+  left: 0;
+}
+
+.landing-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  gap: 48px;
+  align-items: center;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: clamp(40px, 7vw, 88px) clamp(16px, 4vw, 48px) 48px;
+}
+
+.landing-kicker {
+  display: inline-block;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  box-shadow: var(--shadow-sm);
+}
+
+.landing-hero h1 {
+  margin: 18px 0 18px;
+  font-size: clamp(34px, 5vw, 56px);
+  font-weight: 800;
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.landing-lead {
+  font-size: 17px;
+  line-height: 1.65;
+  color: var(--text-muted);
+  max-width: 540px;
+}
+
+.landing-cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 28px 0 14px;
+}
+
+.btn-large {
+  padding: 14px 26px;
+  font-size: 15px;
+  border-radius: 14px;
+}
+
+.landing-note {
+  font-size: 13px;
+  color: var(--text-faint);
+}
+
+.landing-hero-art {
+  position: relative;
+  min-height: 380px;
+}
+
+.hero-card {
+  position: absolute;
+  background: var(--surface);
+  border-radius: 20px;
+  box-shadow: var(--shadow);
+  padding: 18px 20px;
+}
+
+.hero-card-main {
+  top: 30px;
+  left: 0;
+  right: 40px;
+}
+
+.hero-card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.hero-card-head > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.hero-card-head strong {
+  display: block;
+  font-size: 15px;
+}
+
+.hero-card-head small {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.hero-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.hero-card-float {
+  bottom: 40px;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--primary);
+  min-width: 230px;
+}
+
+.hero-card-float strong,
+.hero-card-float-2 strong {
+  display: block;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.hero-card-float small,
+.hero-card-float-2 small {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.hero-card-float-2 {
+  bottom: 0;
+  left: 30px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 220px;
+}
+
+.landing-section {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: clamp(48px, 7vw, 88px) clamp(16px, 4vw, 48px) 0;
+  scroll-margin-top: 80px;
+}
+
+.landing-heading {
+  text-align: center;
+  max-width: 640px;
+  margin: 0 auto 36px;
+}
+
+.landing-heading h2 {
+  margin: 14px 0 10px;
+  font-size: clamp(26px, 3.4vw, 36px);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.landing-heading p {
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.solution-grid,
+.feature-grid,
+.pricing-grid {
+  display: grid;
+  gap: 20px;
+}
+
+.solution-grid {
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.feature-grid {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.pricing-grid {
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  max-width: 820px;
+  margin: 0 auto;
+}
+
+.solution-card,
+.feature-card,
+.pricing-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--surface);
+  border-radius: 22px;
+  box-shadow: var(--shadow-sm);
+  padding: 26px;
+  transition: box-shadow 0.2s, transform 0.2s;
+}
+
+.solution-card:hover,
+.feature-card:hover,
+.pricing-card:hover {
+  box-shadow: var(--shadow);
+  transform: translateY(-2px);
+}
+
+.solution-card h3,
+.feature-card h3,
+.pricing-card h3 {
+  font-size: 19px;
+  font-weight: 800;
+}
+
+.solution-card p,
+.feature-card p {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.solution-card ul,
+.pricing-card ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 4px;
+  font-size: 14px;
+}
+
+.solution-card li,
+.pricing-card li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.solution-card li svg,
+.pricing-card li svg {
+  color: var(--green);
+  margin-top: 2px;
+}
+
+.solution-icon,
+.feature-icon {
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.pricing-card {
+  padding: 30px;
+}
+
+.pricing-card.featured {
+  border: 2px solid var(--primary);
+}
+
+.pricing-badge {
+  position: absolute;
+  top: -12px;
+  right: 24px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.pricing-tagline {
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.pricing-price {
+  font-size: 38px;
+  font-weight: 800;
+  color: var(--primary);
+  letter-spacing: -0.02em;
+}
+
+.pricing-price span {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-faint);
+}
+
+.pricing-card button {
+  margin-top: auto;
+  width: 100%;
+}
+
+.landing-cta-band {
+  max-width: 1200px;
+  margin: clamp(56px, 8vw, 96px) auto 0;
+  padding: 48px 32px;
+  border-radius: 28px;
+  background: var(--primary);
+  color: var(--on-primary);
+  text-align: center;
+  box-shadow: var(--shadow-lg);
+}
+
+.landing-cta-band h2 {
+  font-size: clamp(24px, 3vw, 32px);
+  font-weight: 800;
+  margin-bottom: 8px;
+}
+
+.landing-cta-band p {
+  opacity: 0.9;
+  margin-bottom: 22px;
+}
+
+.landing-cta-band .btn-primary {
+  background: var(--surface);
+  color: var(--primary);
+}
+
+.landing-cta-band .btn-primary:hover:not(:disabled) {
+  background: var(--panel);
+}
+
+.landing-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: 1200px;
+  margin: 40px auto 0;
+  padding: 28px clamp(16px, 4vw, 48px) 40px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--text-faint);
+}
+
+.landing-footer-links {
+  display: flex;
+  gap: 8px;
+}
+
+@media (max-width: 960px) {
+  .landing-links {
+    display: none;
+  }
+
+  .landing-nav {
+    grid-template-columns: 1fr auto;
+  }
+
+  .landing-hero {
+    grid-template-columns: 1fr;
+    gap: 28px;
+  }
+
+  .landing-hero-art {
+    min-height: 340px;
+  }
+}
+
+@media (max-width: 560px) {
+  .landing-nav {
+    height: auto;
+    padding: 12px 16px;
+    row-gap: 10px;
+  }
+
+  .landing-actions {
+    gap: 6px;
+  }
+
+  .landing-actions .btn-secondary,
+  .landing-actions .btn-primary {
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+
+  .lang-code {
+    display: none;
+  }
+
+  .landing-hero-art {
+    min-height: 330px;
+  }
+
+  .hero-card-main {
+    right: 0;
+  }
+
+  .hero-card-float,
+  .hero-card-float-2 {
+    min-width: 0;
+  }
+
+  .hero-card-float {
+    right: 0;
+  }
+}
+
+.landing-hero-text {
+  min-width: 0;
+}
+
+@media (max-width: 560px) {
+  .hero-card-float-2 {
+    display: none;
+  }
+}
+
+/* sign-in card: back link on its own line, brand centred above the heading */
+.login-card > .btn-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+}
+
+.login-card > .auth-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  gap: 6px;
+  margin: 6px 0 14px;
+}
