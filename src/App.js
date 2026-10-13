@@ -279,7 +279,7 @@ const PLANS = [
     name: 'Pro',
     price: 19.99,
     tagline: 'For a growing coaching practice',
-    features: ['Unlimited clients', 'Everything in Starter', 'Priority support', 'AI check-in analysis when released']
+    features: ['Unlimited clients', 'Everything in Free', 'Priority support', 'AI check-in analysis when released']
   }
 ];
 
@@ -858,7 +858,7 @@ const decorateClient = (c, clientData) => {
 
 // ---- Message templates (what you see in the preview is exactly what is sent) ----
 const clientFooter = (coachName) =>
-  `\n\n--\nYou are receiving this because your coach ${coachName} set it up for you in CoachFlow. ` +
+  `\n\n--\nYou are receiving this because your coach ${coachName} set it up for you in BodUp. ` +
   `If you would rather not get these messages, reply and ask ${firstName(coachName)} to switch them off.`;
 
 const progressLines = (client) => {
@@ -927,7 +927,7 @@ const buildCoachReminder = ({ coachName, client, whenText, type, meetToken }) =>
     body:
       `Hi ${coachF},\n\nThis is your reminder to give ${client.name} feedback (${how}) on ${whenText}.${meetLine}\n` +
       `Where ${firstName(client.name)} stands right now:\n${progressLines(client).map((l) => `- ${l}`).join('\n')}\n\n` +
-      `Open CoachFlow and look at ${firstName(client.name)}'s page before you start.`
+      `Open BodUp and look at ${firstName(client.name)}'s page before you start.`
   };
 };
 
@@ -1119,10 +1119,10 @@ const buildInviteEmail = ({ coachName, clientName, code, appUrl }) => {
   const cf = firstName(clientName);
   const coachF = firstName(coachName);
   return {
-    subject: `Coach ${coachF} is waiting for you on CoachFlow`,
+    subject: `Coach ${coachF} is waiting for you on BodUp`,
     body:
       `Hey ${cf}, Coach ${coachF} here!\n\n` +
-      `A little while ago I invited you to CoachFlow, where we will track your progress and keep our feedback sessions on schedule. ` +
+      `A little while ago I invited you to BodUp, where we will track your progress and keep our feedback sessions on schedule. ` +
       `It looks like you have not joined yet - it only takes a minute.\n\n` +
       `How to join:\n` +
       `1. Open ${appUrl}\n` +
@@ -1131,7 +1131,7 @@ const buildInviteEmail = ({ coachName, clientName, code, appUrl }) => {
       `Your invite code: ${code}\n\n` +
       `If anything is unclear, just reply to this email and I will help.\n\n` +
       `Coach ${coachF}\n\n--\n` +
-      `You are receiving this because your coach ${coachName} invited you to CoachFlow.`
+      `You are receiving this because your coach ${coachName} invited you to BodUp.`
   };
 };
 
@@ -1711,6 +1711,781 @@ function LearningPage() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Admin area (the server decides who is an admin, see api/admin.js)
+// ---------------------------------------------------------------------------
+const adminCall = async (action, payload = {}) => {
+  const current = auth.currentUser;
+  if (!current) throw new Error('Please sign in again.');
+  const token = await current.getIdToken();
+  const res = await fetch('/api/admin', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ action, ...payload })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+};
+
+// Asks the server whether this signed-in person is the admin. Any failure means "no".
+const checkIsAdmin = async () => {
+  try {
+    const data = await adminCall('whoami');
+    return data.admin === true;
+  } catch (err) {
+    return false;
+  }
+};
+
+const ADMIN_NAV = [
+  { id: 'overview', label: 'Overview', icon: 'dashboard', action: 'overview' },
+  { id: 'inbox', label: 'Inbox', icon: 'mail', action: 'messages' },
+  { id: 'users', label: 'Users', icon: 'users', action: 'users' },
+  { id: 'emails', label: 'Email log', icon: 'clock', action: 'emailLog' },
+  { id: 'billing', label: 'Billing', icon: 'card', action: 'billing' }
+];
+
+const MAIL_KIND_LABEL = {
+  feedback: 'Feedback',
+  'coach-reminder': 'Coach reminder',
+  birthday: 'Birthday',
+  christmas: 'Christmas',
+  partner: 'Partner intro'
+};
+
+const adminDate = (value) => (value ? formatDate(new Date(value)) : '-');
+
+function AdminPanel({ user, theme, onToggleTheme, onSignOut }) {
+  const [page, setPage] = useState('overview');
+  const [collapsed, setCollapsed] = useState(() => window.innerWidth < 768);
+  const [cache, setCache] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState(null);
+  const [msgFilter, setMsgFilter] = useState('new');
+  const [userQuery, setUserQuery] = useState('');
+  const [roleFilter, setRoleFilter] = useState('all');
+  const [mailFilter, setMailFilter] = useState('all');
+
+  const load = async (target) => {
+    const entry = ADMIN_NAV.find((n) => n.id === target);
+    setLoading(true);
+    setError('');
+    try {
+      const data = await adminCall(entry.action);
+      setCache((prev) => ({ ...prev, [target]: data }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    setNotice(null);
+    load(page);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page]);
+
+  const act = async (action, payload, okText) => {
+    try {
+      setLoading(true);
+      await adminCall(action, payload);
+      setNotice({ type: 'success', text: okText });
+      await load(page);
+    } catch (err) {
+      setNotice({ type: 'error', text: err.message });
+      setLoading(false);
+    }
+  };
+
+  const changeStatus = (u, status, verb) => {
+    if (!window.confirm(`${verb} ${u.displayName || u.email}?`)) return;
+    act('setUserStatus', { uid: u.uid, status }, `${u.displayName || u.email}: ${verb.toLowerCase()} done.`);
+  };
+
+  const data = cache[page];
+  const adminName = user.displayName || user.email;
+
+  const messagesList = data && page === 'inbox' ? data.messages : [];
+  const shownMessages = messagesList.filter((m) => msgFilter === 'all' || m.status === msgFilter);
+
+  const usersList = data && page === 'users' ? data.users : [];
+  const needle = userQuery.trim().toLowerCase();
+  const shownUsers = usersList.filter(
+    (u) =>
+      (roleFilter === 'all' || u.role === roleFilter) &&
+      (!needle || `${u.displayName} ${u.email}`.toLowerCase().includes(needle))
+  );
+
+  const mailList = data && page === 'emails' ? data.emails : [];
+  const shownMail = mailList.filter((m) => mailFilter === 'all' || m.status === mailFilter);
+
+  return (
+    <div className={`dashboard-container ${collapsed ? 'collapsed' : ''}`}>
+      <aside className="sidebar">
+        <div className="sidebar-header">
+          {!collapsed && <h1><BrandMark size={30} /></h1>}
+          <button
+            className="sidebar-toggle"
+            onClick={() => setCollapsed(!collapsed)}
+            aria-label={collapsed ? 'Expand menu' : 'Collapse menu'}
+            title={collapsed ? 'Expand menu' : 'Collapse menu'}
+          >
+            <Icon name={collapsed ? 'expand' : 'collapse'} />
+          </button>
+        </div>
+
+        <div className="coach-chip" title={adminName}>
+          <span className="client-avatar coach-avatar">{initialOf(adminName)}</span>
+          <span className="nav-label coach-chip-text">
+            <span className="coach-chip-name">{adminName}</span>
+            <span className="coach-chip-role">Administrator</span>
+          </span>
+        </div>
+
+        <nav className="sidebar-nav">
+          {ADMIN_NAV.map((item) => (
+            <button
+              key={item.id}
+              className={`nav-item ${page === item.id ? 'active' : ''}`}
+              onClick={() => setPage(item.id)}
+              title={item.label}
+            >
+              <Icon name={item.icon} />
+              <span className="nav-label">{item.label}</span>
+            </button>
+          ))}
+        </nav>
+
+        <div className="sidebar-footer">
+          <button className="nav-item logout" onClick={onSignOut} title="Log out">
+            <Icon name="logout" />
+            <span className="nav-label">Log out</span>
+          </button>
+        </div>
+      </aside>
+
+      <div className="workspace">
+        <header className="topbar">
+          <div className="topbar-left" />
+          <nav className="topnav" aria-label="Admin">
+            {ADMIN_NAV.map((item) => (
+              <button
+                key={item.id}
+                className={`topnav-item ${page === item.id ? 'active' : ''}`}
+                onClick={() => setPage(item.id)}
+              >
+                <Icon name={item.icon} size={18} />
+                <span className="topnav-label">{item.label}</span>
+              </button>
+            ))}
+          </nav>
+          <div className="topbar-right">
+            <button className="btn-icon" onClick={() => load(page)} disabled={loading} title="Reload" aria-label="Reload">
+              <Icon name="refresh" size={18} />
+            </button>
+            <button
+              className="btn-icon"
+              onClick={onToggleTheme}
+              aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+            >
+              <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={18} />
+            </button>
+          </div>
+        </header>
+
+        <main className="main-content">
+          {notice && <p className={`form-message ${notice.type}`}>{notice.text}</p>}
+          {error && <p className="form-message error">{error}</p>}
+          {loading && !data && <p className="empty-state">Loading...</p>}
+
+          {page === 'overview' && data && (
+            <div className="dashboard-view">
+              <div className="page-header">
+                <h2>Overview</h2>
+                <p>How BodUp is doing right now.</p>
+              </div>
+              <div className="stats-grid">
+                <div className="stat-card"><div className="stat-value">{data.coaches}</div><div className="stat-label">Coaches</div></div>
+                <div className="stat-card"><div className="stat-value">{data.clientAccounts}</div><div className="stat-label">Client accounts</div></div>
+                <div className="stat-card"><div className="stat-value">{data.joinedClients}</div><div className="stat-label">Clients linked to a coach</div></div>
+                <div className="stat-card"><div className="stat-value">{data.pendingInvites}</div><div className="stat-label">Pending invites</div></div>
+                <div className="stat-card"><div className="stat-value">{data.signUpsLast30Days}</div><div className="stat-label">Sign-ups, last 30 days</div></div>
+                <div className="stat-card"><div className="stat-value">{data.suspendedCoaches}</div><div className="stat-label">Suspended coaches</div></div>
+                <div className="stat-card"><div className="stat-value">{data.closedAccounts}</div><div className="stat-label">Closed accounts</div></div>
+              </div>
+
+              <div className="two-col">
+                <button className="section attention-card" onClick={() => setPage('inbox')}>
+                  <span className={`attention-count ${data.newMessages > 0 ? 'alert' : ''}`}>{data.newMessages}</span>
+                  <span>
+                    <strong>New messages</strong>
+                    <small>People who used Contact admin</small>
+                  </span>
+                </button>
+                <button className="section attention-card" onClick={() => setPage('emails')}>
+                  <span className={`attention-count ${data.failedEmails > 0 ? 'alert' : ''}`}>{data.failedEmails}</span>
+                  <span>
+                    <strong>Failed emails</strong>
+                    <small>{data.scheduledEmails} more are waiting to be sent</small>
+                  </span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {page === 'inbox' && data && (
+            <div className="dashboard-view">
+              <div className="page-header page-header-row">
+                <div>
+                  <h2>Inbox</h2>
+                  <p>Messages from coaches and clients.</p>
+                </div>
+                <div className="chip-row">
+                  {[
+                    ['new', 'New'],
+                    ['handled', 'Handled'],
+                    ['all', 'All']
+                  ].map(([id, label]) => (
+                    <button key={id} className={`chip ${msgFilter === id ? 'active' : ''}`} onClick={() => setMsgFilter(id)}>
+                      {label}
+                      {id !== 'all' && ` (${messagesList.filter((m) => m.status === id).length})`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {shownMessages.length === 0 ? (
+                <section className="section"><p className="empty-state">No messages here.</p></section>
+              ) : (
+                <div className="msg-list">
+                  {shownMessages.map((m) => (
+                    <article key={m.id} className={`msg-card ${m.status}`}>
+                      <div className="msg-top">
+                        <h4>{m.subject || '(no subject)'}</h4>
+                        <span className={`status-pill ${m.status === 'new' ? 'scheduled' : 'sent'}`}>{m.status}</span>
+                      </div>
+                      <p className="msg-meta">
+                        {m.name || 'Unknown'} ({m.role}) - {m.email} - {adminDate(m.createdAt)}
+                      </p>
+                      <p className="msg-body">{m.message}</p>
+                      <div className="msg-actions">
+                        <a
+                          className="btn-secondary btn-small btn-link"
+                          href={`mailto:${m.email}?subject=${encodeURIComponent(`Re: ${m.subject}`)}`}
+                        >
+                          Reply by email
+                        </a>
+                        <button
+                          className="btn-secondary btn-small"
+                          disabled={loading}
+                          onClick={() =>
+                            act('setMessageStatus', { id: m.id, status: m.status === 'new' ? 'handled' : 'new' }, 'Message updated.')
+                          }
+                        >
+                          {m.status === 'new' ? 'Mark as handled' : 'Reopen'}
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {page === 'users' && data && (
+            <div className="dashboard-view">
+              <div className="page-header page-header-row">
+                <div>
+                  <h2>Users</h2>
+                  <p>{usersList.length} accounts. Close or suspend access here.</p>
+                </div>
+                <div className="admin-toolbar">
+                  <input
+                    className="admin-search"
+                    type="search"
+                    placeholder="Search name or email"
+                    value={userQuery}
+                    onChange={(e) => setUserQuery(e.target.value)}
+                    aria-label="Search users"
+                  />
+                  <div className="chip-row">
+                    {['all', 'coach', 'client'].map((r) => (
+                      <button key={r} className={`chip ${roleFilter === r ? 'active' : ''}`} onClick={() => setRoleFilter(r)}>
+                        {r === 'all' ? 'All' : r === 'coach' ? 'Coaches' : 'Clients'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <section className="section">
+                {shownUsers.length === 0 ? (
+                  <p className="empty-state">No users match.</p>
+                ) : (
+                  <div className="table-scroll">
+                    <table className="data-table admin-table">
+                      <thead>
+                        <tr>
+                          <th>User</th>
+                          <th>Role</th>
+                          <th>Details</th>
+                          <th>Joined</th>
+                          <th>Status</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {shownUsers.map((u) => (
+                          <tr key={u.uid}>
+                            <td>
+                              <strong>{u.displayName || '-'}</strong>
+                              <div className="cell-sub">{u.email}</div>
+                            </td>
+                            <td className="capitalize">{u.role}</td>
+                            <td>
+                              {u.role === 'coach'
+                                ? `${u.clientCount} clients${u.plan ? `, ${u.plan}` : ''}`
+                                : u.coachName
+                                ? `Coach: ${u.coachName}`
+                                : '-'}
+                            </td>
+                            <td>{adminDate(u.createdAt)}</td>
+                            <td><span className={`status-pill ${u.status}`}>{u.status}</span></td>
+                            <td>
+                              <div className="row-actions">
+                                {u.status === 'active' && u.role === 'coach' && (
+                                  <button className="btn-secondary btn-small" disabled={loading} onClick={() => changeStatus(u, 'suspended', 'Suspend')}>
+                                    Suspend
+                                  </button>
+                                )}
+                                {u.status === 'suspended' && (
+                                  <button className="btn-secondary btn-small" disabled={loading} onClick={() => changeStatus(u, 'active', 'Reactivate')}>
+                                    Reactivate
+                                  </button>
+                                )}
+                                {u.status !== 'closed' && (
+                                  <button className="btn-danger btn-small" disabled={loading} onClick={() => changeStatus(u, 'closed', 'Close')}>
+                                    Close
+                                  </button>
+                                )}
+                                {u.status === 'closed' && (
+                                  <button className="btn-secondary btn-small" disabled={loading} onClick={() => changeStatus(u, 'active', 'Reopen')}>
+                                    Reopen
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+              <p className="field-hint">
+                Suspended coaches can sign in and contact you, but cannot use the app, and their automated emails wait.
+                Closed accounts cannot sign in at all.
+              </p>
+            </div>
+          )}
+
+          {page === 'emails' && data && (
+            <div className="dashboard-view">
+              <div className="page-header page-header-row">
+                <div>
+                  <h2>Email log</h2>
+                  <p>Every email BodUp has scheduled or sent (latest 300).</p>
+                </div>
+                <div className="chip-row">
+                  {['all', 'scheduled', 'sent', 'failed', 'expired', 'cancelled'].map((s) => (
+                    <button key={s} className={`chip ${mailFilter === s ? 'active' : ''}`} onClick={() => setMailFilter(s)}>
+                      {s === 'all' ? 'All' : s[0].toUpperCase() + s.slice(1)}
+                      {s !== 'all' && ` (${mailList.filter((m) => m.status === s).length})`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <section className="section">
+                {shownMail.length === 0 ? (
+                  <p className="empty-state">No emails in this view.</p>
+                ) : (
+                  <div className="table-scroll">
+                    <table className="data-table admin-table">
+                      <thead>
+                        <tr>
+                          <th>Send date</th>
+                          <th>Type</th>
+                          <th>Coach</th>
+                          <th>To</th>
+                          <th>Subject</th>
+                          <th>Status</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {shownMail.map((m) => (
+                          <tr key={m.id}>
+                            <td>{m.sendOn || '-'}</td>
+                            <td>{MAIL_KIND_LABEL[m.kind] || m.kind}</td>
+                            <td>{m.coachName || '-'}</td>
+                            <td>{m.to || '-'}</td>
+                            <td className="cell-wide">{m.subject}</td>
+                            <td>
+                              <span className={`status-pill ${m.status}`}>{m.status}</span>
+                              {m.error && <div className="cell-sub error-text">{m.error}</div>}
+                              {m.sentAt && <div className="cell-sub">{adminDate(m.sentAt)}</div>}
+                            </td>
+                            <td>
+                              <div className="row-actions">
+                                {(m.status === 'failed' || m.status === 'expired') && (
+                                  <button
+                                    className="btn-secondary btn-small"
+                                    disabled={loading}
+                                    onClick={() => act('retryEmail', { id: m.id }, 'Email will be sent in the next daily run.')}
+                                  >
+                                    Retry
+                                  </button>
+                                )}
+                                {m.status === 'scheduled' && (
+                                  <button
+                                    className="btn-secondary btn-small"
+                                    disabled={loading}
+                                    onClick={() => act('cancelEmail', { id: m.id }, 'Email cancelled.')}
+                                  >
+                                    Cancel
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            </div>
+          )}
+
+          {page === 'billing' && data && (
+            <div className="dashboard-view">
+              <div className="page-header">
+                <h2>Billing</h2>
+                <p>Plans and invoices across all coaches.</p>
+              </div>
+              <div className="notice-banner">
+                <Icon name="alert" size={18} />
+                <span>Demo mode. These figures come from demo subscriptions and invoices, not real payments.</span>
+              </div>
+
+              <div className="stats-grid">
+                <div className="stat-card"><div className="stat-value">{formatMoney(data.totals.monthlyRecurring)}</div><div className="stat-label">Monthly recurring</div></div>
+                <div className="stat-card"><div className="stat-value">{formatMoney(data.totals.invoicedThisMonth)}</div><div className="stat-label">Invoiced this month</div></div>
+                <div className="stat-card"><div className="stat-value">{formatMoney(data.totals.invoicedAllTime)}</div><div className="stat-label">Invoiced, all time</div></div>
+                <div className="stat-card"><div className="stat-value">{data.totals.payingCoaches}</div><div className="stat-label">Paying coaches</div></div>
+                <div className="stat-card"><div className="stat-value">{data.totals.coachesWithoutPlan}</div><div className="stat-label">Coaches without a plan</div></div>
+              </div>
+
+              <section className="section">
+                <h3>Subscriptions</h3>
+                {data.subscriptions.length === 0 ? (
+                  <p className="empty-state">No subscriptions yet.</p>
+                ) : (
+                  <div className="table-scroll">
+                    <table className="data-table admin-table">
+                      <thead>
+                        <tr><th>Coach</th><th>Plan</th><th>Price</th><th>Status</th><th>Next payment</th></tr>
+                      </thead>
+                      <tbody>
+                        {data.subscriptions.map((s) => (
+                          <tr key={s.coachId}>
+                            <td><strong>{s.coachName}</strong><div className="cell-sub">{s.email}</div></td>
+                            <td>{s.planName}</td>
+                            <td>{s.price === 0 ? 'Free' : formatMoney(s.price, s.currency)}</td>
+                            <td><span className={`status-pill ${s.status === 'active' ? 'active' : 'closed'}`}>{s.status}</span></td>
+                            <td>{adminDate(s.nextBillingDate)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
+              <section className="section">
+                <h3>Latest invoices</h3>
+                {data.invoices.length === 0 ? (
+                  <p className="empty-state">No invoices yet.</p>
+                ) : (
+                  <div className="table-scroll">
+                    <table className="data-table admin-table">
+                      <thead>
+                        <tr><th>Invoice</th><th>Date</th><th>Coach</th><th>Plan</th><th>Amount</th><th>Method</th><th>Status</th></tr>
+                      </thead>
+                      <tbody>
+                        {data.invoices.map((inv) => (
+                          <tr key={inv.id}>
+                            <td>{inv.invoiceNumber}</td>
+                            <td>{adminDate(inv.createdAt)}</td>
+                            <td>{inv.coachName}</td>
+                            <td>{inv.planName}</td>
+                            <td>{formatMoney(inv.amount, inv.currency)}</td>
+                            <td>{inv.methodLabel}</td>
+                            <td>
+                              <span className="status-pill active">{inv.status}</span>
+                              {inv.mode === 'demo' && <span className="demo-tag">demo</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            </div>
+          )}
+        </main>
+      </div>
+    </div>
+  );
+}
+
+// Shown to a coach whose account has been suspended by the admin
+function SuspendedPage({ user, onSignOut, onSend, message, loading }) {
+  return (
+    <div className="login-container">
+      <div className="login-card suspended-card">
+        <h1>Account suspended</h1>
+        <p className="subtitle">
+          Your BodUp account is suspended for now. Your clients and their data are kept safe. Write to the admin to sort it out.
+        </p>
+        <form className="form" onSubmit={onSend}>
+          <div className="form-group">
+            <label>Subject</label>
+            <input type="text" name="subject" defaultValue="My suspended account" required />
+          </div>
+          <div className="form-group">
+            <label>Message</label>
+            <textarea name="message" rows="4" required />
+          </div>
+          {message && <p className={`form-message ${message.type}`}>{message.text}</p>}
+          <button type="submit" className="btn-primary" disabled={loading}>
+            {loading ? 'Sending...' : 'Contact admin'}
+          </button>
+        </form>
+        <p className="suspended-signed-in">Signed in as {user.email}</p>
+        <button className="btn-secondary" onClick={onSignOut}>Log out</button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// BodUp brand and public landing page (shown before anyone signs in)
+// ---------------------------------------------------------------------------
+function BrandMark({ size = 30, showText = true, className = '' }) {
+  return (
+    <span className={`brand-mark ${className}`}>
+      <img src="/bodup-mark.png" alt="" height={size} style={{ height: size, width: 'auto' }} />
+      {showText && <span className="brand-name">BodUp</span>}
+    </span>
+  );
+}
+
+const LANDING_SOLUTIONS = [
+  {
+    icon: 'users',
+    title: 'For coaches',
+    text: 'See every client at a glance, from who needs attention today to who has reached their goal. Run feedback sessions and reminders from one calendar.',
+    points: ['Client activity overview', 'Feedback sessions with Google Meet or email', 'Invite clients with a single code']
+  },
+  {
+    icon: 'check',
+    title: 'For clients',
+    text: 'A simple place to log each day, keep your profile up to date and see your coach\u2019s sessions. Logging a single day is enough to stay on track.',
+    points: ['Day-by-day or whole-week check-ins', 'Your progress and weight trend', 'Learning library and shopping lists']
+  },
+  {
+    icon: 'gift',
+    title: 'For a healthy routine',
+    text: 'Keep the habits going between sessions with friendly messages and practical guides, sent only to clients who have chosen to receive them.',
+    points: ['Birthday and Christmas wishes', 'Batch-cooking and substitution guides', 'Myth-busting, science-backed tips']
+  }
+];
+
+const LANDING_FEATURES = [
+  { icon: 'dashboard', title: 'Client activity at a glance', text: 'Green, yellow and red groups show who is on track and who needs a message today.' },
+  { icon: 'check', title: 'Weekly check-ins', text: 'Clients log weight, meals and water for one day or the whole week, and see their progress.' },
+  { icon: 'calendar', title: 'Calendar and sessions', text: 'Schedule a Google Meet 1-on-1 or an email feedback. Reminders go to your inbox ahead of time.' },
+  { icon: 'mail', title: 'Automated messages', text: 'Preview every email before it goes out. Birthday and Christmas messages are switched on per client with consent.' },
+  { icon: 'book', title: 'Learning library', text: 'A shopping list, a batch-cooking guide, a myth buster and a healthier substitution chart.' },
+  { icon: 'trophy', title: 'Programme tracking', text: 'Mark programmes as completed, see inactive clients, and reopen them whenever you need.' }
+];
+
+function LandingPage({ language, onLanguage, onLogin, onRegister }) {
+  const scrollTo = (id) => (e) => {
+    e.preventDefault();
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  return (
+    <div className="landing">
+      <header className="landing-nav">
+        <a href="#top" className="landing-brand" onClick={scrollTo('top')} aria-label="BodUp home">
+          <BrandMark size={34} />
+        </a>
+        <nav className="landing-links" aria-label="Page sections">
+          <a href="#solutions" onClick={scrollTo('solutions')}>Solutions</a>
+          <a href="#features" onClick={scrollTo('features')}>Features</a>
+          <a href="#pricing" onClick={scrollTo('pricing')}>Pricing</a>
+        </nav>
+        <div className="landing-actions">
+          <LanguageMenu language={language} onChange={onLanguage} />
+          <button className="btn-secondary landing-login" onClick={onLogin}>Log in</button>
+          <button className="btn-primary landing-register" onClick={onRegister}>Register</button>
+        </div>
+      </header>
+
+      <section id="top" className="landing-hero">
+        <div className="landing-hero-text">
+          <span className="landing-kicker">Coaching, simplified</span>
+          <h1>Keep every client on track, without the spreadsheets.</h1>
+          <p className="landing-lead">
+            BodUp brings client check-ins, feedback sessions, reminders and learning together in one place, so coaches
+            spend time coaching and clients always know what comes next.
+          </p>
+          <div className="landing-cta">
+            <button className="btn-primary btn-large" onClick={onRegister}>Register as a coach</button>
+            <button className="btn-secondary btn-large" onClick={scrollTo('pricing')}>See pricing</button>
+          </div>
+          <p className="landing-note">Free to start. Clients join with an invite code from their coach.</p>
+        </div>
+
+        <div className="landing-hero-art" aria-hidden="true">
+          <div className="hero-card hero-card-main">
+            <div className="hero-card-head">
+              <span className="client-avatar large">A</span>
+              <div>
+                <strong>Sample client</strong>
+                <small>Checked in today</small>
+              </div>
+              <span className="level-pill green">Running good</span>
+            </div>
+            <div className="hero-metrics">
+              <div><span className="metric-value">78.4 kg</span><span className="metric-label">Current weight</span></div>
+              <div><span className="metric-value">-4.2 kg</span><span className="metric-label">Since start</span></div>
+              <div><span className="metric-value">6 / 7</span><span className="metric-label">Days logged</span></div>
+            </div>
+          </div>
+          <div className="hero-card hero-card-float">
+            <Icon name="calendar" size={18} />
+            <div>
+              <strong>Feedback session</strong>
+              <small>Thu 10:00, Google Meet</small>
+            </div>
+          </div>
+          <div className="hero-card hero-card-float-2">
+            <span className="level-dot yellow" />
+            <div>
+              <strong>Keep watch</strong>
+              <small>No check-in for 9 days</small>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="solutions" className="landing-section">
+        <div className="landing-heading">
+          <span className="landing-kicker">Solutions</span>
+          <h2>One platform for coach, client and routine</h2>
+          <p>Whether you coach one client or a whole practice, BodUp gives you the same clear picture.</p>
+        </div>
+        <div className="solution-grid">
+          {LANDING_SOLUTIONS.map((s) => (
+            <article key={s.title} className="solution-card">
+              <span className="solution-icon"><Icon name={s.icon} size={22} /></span>
+              <h3>{s.title}</h3>
+              <p>{s.text}</p>
+              <ul>
+                {s.points.map((p) => (
+                  <li key={p}><Icon name="check" size={14} /><span>{p}</span></li>
+                ))}
+              </ul>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section id="features" className="landing-section">
+        <div className="landing-heading">
+          <span className="landing-kicker">Features</span>
+          <h2>Everything you need, and nothing you don't</h2>
+          <p>Built around the daily work of coaching, from first invite to finished programme.</p>
+        </div>
+        <div className="feature-grid">
+          {LANDING_FEATURES.map((f) => (
+            <div key={f.title} className="feature-card">
+              <span className="feature-icon"><Icon name={f.icon} size={20} /></span>
+              <h3>{f.title}</h3>
+              <p>{f.text}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section id="pricing" className="landing-section">
+        <div className="landing-heading">
+          <span className="landing-kicker">Pricing</span>
+          <h2>Start free, grow when you're ready</h2>
+          <p>Prices in euros, billed monthly. Change or cancel your plan at any time.</p>
+        </div>
+        <div className="pricing-grid">
+          {PLANS.map((plan) => (
+            <article key={plan.id} className={`pricing-card ${plan.price > 0 ? 'featured' : ''}`}>
+              {plan.price > 0 && <span className="pricing-badge">Most popular</span>}
+              <h3>{plan.name}</h3>
+              <p className="pricing-tagline">{plan.tagline}</p>
+              <div className="pricing-price">
+                {plan.price === 0 ? '0 EUR' : `${plan.price.toFixed(2)} EUR`}
+                <span>{plan.price === 0 ? ' forever' : ' / month'}</span>
+              </div>
+              <ul>
+                {plan.features.map((f) => (
+                  <li key={f}><Icon name="check" size={16} /><span>{f}</span></li>
+                ))}
+              </ul>
+              <button className={plan.price > 0 ? 'btn-primary' : 'btn-secondary'} onClick={onRegister}>
+                {plan.price === 0 ? 'Start free' : `Choose ${plan.name}`}
+              </button>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="landing-cta-band">
+        <h2>Ready to coach with a clearer view?</h2>
+        <p>Create your coach account in a minute and invite your first client.</p>
+        <button className="btn-primary btn-large" onClick={onRegister}>Register</button>
+      </section>
+
+      <footer className="landing-footer">
+        <BrandMark size={26} />
+        <span>&copy; {new Date().getFullYear()} BodUp. All rights reserved.</span>
+        <div className="landing-footer-links">
+          <button className="link-btn" onClick={onLogin}>Log in</button>
+          <button className="link-btn" onClick={onRegister}>Register</button>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
 function App() {
   const [user, setUser] = useState(null);
   const [userRole, setUserRole] = useState(null);
@@ -1764,24 +2539,33 @@ function App() {
   const [checkinDay, setCheckinDay] = useState(() => ((new Date().getDay() + 6) % 7) + 1);
   const [clientNotice, setClientNotice] = useState(null);
   const [reminderDraft, setReminderDraft] = useState(null);
+  const [accountStatus, setAccountStatus] = useState('active');
   
   // Invite code flow state
   const [showInviteCodeInput, setShowInviteCodeInput] = useState(false);
+  const [authView, setAuthView] = useState('landing');
   const [inviteCodeInput, setInviteCodeInput] = useState('');
   const [inviteCodeError, setInviteCodeError] = useState('');
 
   const loadUserData = async (userId) => {
     try {
+      // The server decides who the admin is. The admin account never gets a coach or client profile.
+      if (auth.currentUser && auth.currentUser.uid === userId && (await checkIsAdmin())) {
+        setLoginNotice('');
+        setUserRole('admin');
+        return;
+      }
       const userDoc = await getDoc(doc(db, 'users', userId));
       if (userDoc.exists()) {
         if (userDoc.data().status === 'closed') {
           await signOut(auth);
           setUser(null);
           setUserRole(null);
-          setLoginNotice('This account has been closed. Contact the CoachFlow admin if you think this is a mistake.');
+          setLoginNotice('This account has been closed. Contact the BodUp admin if you think this is a mistake.');
           return;
         }
         setLoginNotice('');
+        setAccountStatus(userDoc.data().status || 'active');
         setUserRole(userDoc.data().role);
         setCoachProfile(userDoc.data());
         if (userDoc.data().role === 'coach') {
@@ -1950,6 +2734,10 @@ function App() {
       const userDoc = await getDoc(doc(db, 'users', googleUser.uid));
       
       if (!userDoc.exists()) {
+        if (await checkIsAdmin()) {
+          setUserRole('admin');
+          return;
+        }
         await setDoc(doc(db, 'users', googleUser.uid), {
           email: googleUser.email,
           displayName: googleUser.displayName,
@@ -1976,6 +2764,7 @@ function App() {
       await signOut(auth);
       setUser(null);
       setUserRole(null);
+      setAccountStatus('active');
       setClients([]);
       setProfile(null);
       setClientData({});
@@ -2000,6 +2789,7 @@ function App() {
       setCurrentPage('dashboard');
       setShowInviteCodeInput(false);
       setInviteCodeInput('');
+      setAuthView('landing');
     } catch (error) {
       console.error('Sign out error:', error);
     }
@@ -2263,6 +3053,10 @@ function App() {
     }
   }, [language]);
 
+  useEffect(() => {
+    document.title = 'BodUp';
+  }, []);
+
   // ---- Billing (demo mode: nothing is charged) ----
   const fetchBilling = async (coachId) => {
     try {
@@ -2523,7 +3317,7 @@ function App() {
       }
       closeModal();
       await handleSignOut();
-      setLoginNotice('Your account has been closed. Contact the CoachFlow admin if you need it reopened.');
+      setLoginNotice('Your account has been closed. Contact the BodUp admin if you need it reopened.');
     } catch (error) {
       console.error('Error closing account:', error);
       setModalMessage({ type: 'error', text: 'Could not close your account. Try again.' });
@@ -2665,7 +3459,7 @@ function App() {
         const created = await createGoogleMeetEvent({
           token: googleAccess.token,
           summary: `Feedback session - ${c.name}`,
-          description: 'Scheduled with CoachFlow.',
+          description: 'Scheduled with BodUp.',
           start,
           end,
           attendeeEmail: c.email
@@ -2988,14 +3782,42 @@ function App() {
   };
 
   if (!user) {
+    // Visitors see the landing page first. Log in and Register open the sign-in card.
+    // A notice (for example "account closed") always opens the card so the message is seen.
+    if (authView === 'landing' && !loginNotice) {
+      return (
+        <LandingPage
+          language={language}
+          onLanguage={setLanguage}
+          onLogin={() => setAuthView('login')}
+          onRegister={() => setAuthView('register')}
+        />
+      );
+    }
+    const registering = authView === 'register';
     return (
       <div className="login-container">
         <div className="login-card">
-          <h1>CoachFlow AI</h1>
-          <p className="subtitle">Coaching Dashboard</p>
+          <button
+            className="btn-back icon-text"
+            onClick={() => {
+              setLoginNotice('');
+              setShowInviteCodeInput(false);
+              setAuthView('landing');
+            }}
+          >
+            <Icon name="back" size={16} /> Back to home
+          </button>
+          <BrandMark size={44} className="auth-brand" />
+          <h1>{registering ? 'Create your account' : 'Welcome back'}</h1>
+          <p className="subtitle">
+            {registering
+              ? 'Coaches start free. Clients join with the invite code from their coach.'
+              : 'Sign in to continue to BodUp.'}
+          </p>
           {loginNotice && <p className="login-notice">{loginNotice}</p>}
           <button className="google-btn" onClick={handleGoogleSignIn}>
-            Sign in with Google
+            {registering ? 'Register with Google' : 'Sign in with Google'}
           </button>
           <button 
             className="btn-secondary" 
@@ -3117,11 +3939,28 @@ function App() {
     );
   }
 
+  if (userRole === 'admin') {
+    return (
+      <AdminPanel
+        user={user}
+        theme={theme}
+        onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+        onSignOut={handleSignOut}
+      />
+    );
+  }
+
+  if (accountStatus === 'suspended') {
+    return (
+      <SuspendedPage user={user} onSignOut={handleSignOut} onSend={handleSendAdminMessage} message={modalMessage} loading={loading} />
+    );
+  }
+
   if (userRole === 'client' && !profile && currentPage === 'dashboard') {
     return (
       <div className="client-container">
         <header className="client-header">
-          <h1>CoachFlow</h1>
+          <h1><BrandMark size={30} /></h1>
           <div className="header-actions">
             <LanguageMenu language={language} onChange={setLanguage} />
             <button
@@ -3219,7 +4058,7 @@ function App() {
 
     const previewFill = (text) =>
       text.split('{{MEET_LINK}}').join(googleOk ? '[Google Meet link - created when you schedule]' : '[Google Meet link]');
-    const fromLabel = `${coachName} via CoachFlow`;
+    const fromLabel = `${coachName} via BodUp`;
 
     const clientDate = (c) => toDate(c.createdAt) || new Date(0);
     const sparkCards = [
@@ -3347,7 +4186,7 @@ function App() {
       <div className={`dashboard-container ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <aside className="sidebar">
           <div className="sidebar-header">
-            {!sidebarCollapsed && <h1>CoachFlow</h1>}
+            {!sidebarCollapsed && <h1><BrandMark size={30} /></h1>}
             <button
               className="sidebar-toggle"
               onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
@@ -3806,7 +4645,7 @@ function App() {
               <div className="dashboard-view">
                 <div className="page-header">
                   <h2>Chat</h2>
-                  <p>Message your clients directly from CoachFlow.</p>
+                  <p>Message your clients directly from BodUp.</p>
                 </div>
                 <section className="section chat-placeholder">
                   <Icon name="chat" size={36} />
@@ -3821,7 +4660,7 @@ function App() {
               <div className="dashboard-view payments-view">
                 <div className="page-header">
                   <h2>Payments</h2>
-                  <p>Manage your CoachFlow plan, payment methods and invoices.</p>
+                  <p>Manage your BodUp plan, payment methods and invoices.</p>
                 </div>
 
                 <div className="notice-banner">
@@ -4643,7 +5482,7 @@ function App() {
                     </>
                   ) : (
                     <EmailPreview
-                      from="CoachFlow reminders"
+                      from="BodUp reminders"
                       to={user.email}
                       sendOn={formatDate(
                         parseDateKey(
@@ -4962,7 +5801,7 @@ function App() {
       <div className={`dashboard-container ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <aside className="sidebar">
           <div className="sidebar-header">
-            {!sidebarCollapsed && <h1>CoachFlow</h1>}
+            {!sidebarCollapsed && <h1><BrandMark size={30} /></h1>}
             <button
               className="sidebar-toggle"
               onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
@@ -5420,7 +6259,7 @@ function App() {
               <div className="dashboard-view">
                 <div className="page-header">
                   <h2>Chat</h2>
-                  <p>Message your coach directly from CoachFlow.</p>
+                  <p>Message your coach directly from BodUp.</p>
                 </div>
                 <section className="section chat-placeholder">
                   <Icon name="chat" size={36} />
