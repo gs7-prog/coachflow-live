@@ -52,6 +52,8 @@ async function resolveRecipient(db, mail, cache) {
   const coachUser = await getDoc('users', mail.coachId);
   if (!coachUser || coachUser.role !== 'coach') return { error: 'Coach account not found' };
   if (coachUser.status === 'closed') return { error: 'Coach account is closed' };
+  // A suspended coach's emails wait. They go out if the account is reactivated in time, otherwise they expire.
+  if (coachUser.status === 'suspended') return { error: 'Coach account is suspended', hold: true };
 
   if (mail.audience === 'coach') {
     return coachUser.email ? { email: coachUser.email } : { error: 'Coach has no email address' };
@@ -130,7 +132,10 @@ module.exports = async (req, res) => {
 
         const recipient = await resolveRecipient(db, mail, cache);
         if (recipient.error) {
-          if (recipient.skip) {
+          if (recipient.hold) {
+            result.skipped += 1;
+            result.details.push({ id: docSnap.id, kind: mail.kind, outcome: `held: ${recipient.error}` });
+          } else if (recipient.skip) {
             result.skipped += 1;
             result.details.push({ id: docSnap.id, kind: mail.kind, outcome: `skipped: ${recipient.error}` });
             if (!dryRun) await ref.update({ status: 'cancelled', error: recipient.error });
