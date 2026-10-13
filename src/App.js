@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithPopup, reauthenticateWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail, updateProfile, deleteUser } from 'firebase/auth';
+import { getAuth, signInWithPopup, reauthenticateWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail, updateProfile, deleteUser, applyActionCode, verifyPasswordResetCode, confirmPasswordReset } from 'firebase/auth';
 import { getFirestore, collection, addDoc, query, where, getDocs, serverTimestamp, getDoc, doc, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import './App.css';
 
@@ -466,6 +466,12 @@ const ICONS_EXTRA = {
     </>
   ),
   check: <path d="M5 12l5 5 9-10" />,
+  mobile: (
+    <>
+      <rect x="6" y="2" width="12" height="20" rx="2.5" />
+      <path d="M11 18h2" />
+    </>
+  ),
   calendar: (
     <>
       <rect x="3" y="4" width="18" height="17" rx="2.5" />
@@ -657,6 +663,10 @@ function SettingsMenu({ theme, onToggleTheme, onOpenModal }) {
           <button className="menu-item" role="menuitem" onClick={() => choose('profile')}>
             <Icon name="user" size={18} />
             <span>Update profile</span>
+          </button>
+          <button className="menu-item" role="menuitem" onClick={() => choose('install')}>
+            <Icon name="mobile" size={18} />
+            <span>Add to home screen</span>
           </button>
           <button className="menu-item" role="menuitem" onClick={() => choose('contact')}>
             <Icon name="mail" size={18} />
@@ -3362,8 +3372,8 @@ function OnboardingFlow({ user, startStep, startAnswers, onFinished, onStartOver
             />
           </div>
 
-          <div className="onb-field">
-            <label>Your invite link (required)</label>
+          <div className="onb-field onb-key">
+            <label>Your invite link <span className="required-tag">Required</span></label>
             <div className="onb-link">
               <span className="onb-link-prefix">{host}/@</span>
               <input
@@ -3483,8 +3493,170 @@ function EmailSignIn() {
 }
 
 // ---------------------------------------------------------------------------
+function InstallModal({ onClose }) {
+  const installed = isInstalledApp();
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const canInstall = !!window.__bodupInstallEvent;
+
+  const install = async () => {
+    const ev = window.__bodupInstallEvent;
+    if (!ev) return;
+    ev.prompt();
+    await ev.userChoice;
+    window.__bodupInstallEvent = null;
+    onClose();
+  };
+
+  return (
+    <Modal title="Add BodUp to your home screen" onClose={onClose}>
+      {installed ? (
+        <p className="section-subtitle">BodUp is already on this device. Open it from your home screen or desktop.</p>
+      ) : canInstall ? (
+        <>
+          <p className="section-subtitle">Install BodUp as an app. It opens full screen, straight from your home screen or desktop.</p>
+          <div className="modal-actions">
+            <button type="button" className="btn-secondary" onClick={onClose}>Not now</button>
+            <button type="button" className="btn-primary" onClick={install}>Install BodUp</button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="section-subtitle">
+            {ios ? 'On iPhone, add BodUp from Safari:' : 'Add BodUp from your browser menu:'}
+          </p>
+          <ol className="install-steps">
+            {ios ? (
+              <>
+                <li>Tap the Share button in Safari.</li>
+                <li>Choose "Add to Home Screen".</li>
+                <li>Tap Add.</li>
+              </>
+            ) : (
+              <>
+                <li>Open the browser menu (the three dots, or the install icon in the address bar).</li>
+                <li>Choose "Install BodUp" or "Add to Home screen".</li>
+              </>
+            )}
+          </ol>
+          <div className="modal-actions">
+            <button type="button" className="btn-primary" onClick={onClose}>Got it</button>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
+// Email confirmation and password reset links land here (set as the action URL in Firebase)
+function AuthActionPage() {
+  const params = new URLSearchParams(window.location.search);
+  const mode = params.get('mode') || '';
+  const code = params.get('oobCode') || '';
+  const [phase, setPhase] = useState('working');
+  const [message, setMessage] = useState('');
+  const [resetEmail, setResetEmail] = useState('');
+  const [pw, setPw] = useState({ a: '', b: '' });
+
+  useEffect(() => {
+    (async () => {
+      try {
+        if (mode === 'verifyEmail') {
+          await applyActionCode(auth, code);
+          setPhase('verified');
+        } else if (mode === 'resetPassword') {
+          const email = await verifyPasswordResetCode(auth, code);
+          setResetEmail(email);
+          setPhase('reset');
+        } else {
+          setMessage('This link is not valid for BodUp.');
+          setPhase('error');
+        }
+      } catch (err) {
+        setMessage('This link has expired or was already used. Ask BodUp for a new one from the sign-in page.');
+        setPhase('error');
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const goHome = () => {
+    window.location.href = '/';
+  };
+
+  const submitReset = async (e) => {
+    e.preventDefault();
+    if (pw.a.length < 8) return setMessage('Use at least 8 characters.');
+    if (pw.a !== pw.b) return setMessage('The two passwords do not match.');
+    try {
+      await confirmPasswordReset(auth, code, pw.a);
+      setPhase('reset-done');
+    } catch (err) {
+      setMessage('This link has expired or was already used. Ask for a new one.');
+      setPhase('error');
+    }
+  };
+
+  return (
+    <div className="confirm-page">
+      <div className="confirm-card">
+        <div className="gradient-bar" />
+        <div className="confirm-body">
+          <BrandMark size={34} />
+          {phase === 'working' && <p>Checking your link...</p>}
+
+          {phase === 'verified' && (
+            <>
+              <span className="confirm-ok"><Icon name="check" size={26} /></span>
+              <h1>Your email is confirmed</h1>
+              <p>Thank you. Your BodUp account is now fully set up. Go back to BodUp to finish your setup.</p>
+              <button className="btn-primary" onClick={goHome}>Continue to BodUp</button>
+            </>
+          )}
+
+          {phase === 'reset' && (
+            <>
+              <h1>Choose a new password</h1>
+              <p>For {resetEmail}. Use at least 8 characters.</p>
+              <form onSubmit={submitReset}>
+                <input type="password" placeholder="New password" value={pw.a} onChange={(e) => setPw({ ...pw, a: e.target.value })} />
+                <input type="password" placeholder="Confirm new password" value={pw.b} onChange={(e) => setPw({ ...pw, b: e.target.value })} />
+                {message && <p className="form-message error">{message}</p>}
+                <button className="btn-primary" type="submit">Save new password</button>
+              </form>
+            </>
+          )}
+
+          {phase === 'reset-done' && (
+            <>
+              <span className="confirm-ok"><Icon name="check" size={26} /></span>
+              <h1>Password changed</h1>
+              <p>You can now sign in to BodUp with your new password.</p>
+              <button className="btn-primary" onClick={goHome}>Go to BodUp</button>
+            </>
+          )}
+
+          {phase === 'error' && (
+            <>
+              <h1>This link cannot be used</h1>
+              <p>{message}</p>
+              <button className="btn-primary" onClick={goHome}>Back to BodUp</button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Home screen install prompt (a progressive web app: works like an app once added)
 // ---------------------------------------------------------------------------
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    window.__bodupInstallEvent = e;
+  });
+}
+
 const INSTALL_KEY = 'bodup-install-dismissed';
 
 const isInstalledApp = () =>
@@ -3498,6 +3670,7 @@ function InstallPromptHost() {
   const [ios, setIos] = useState(false);
 
   useEffect(() => {
+    if (window.__bodupInstallEvent) setDeferred(window.__bodupInstallEvent);
     const onBefore = (e) => {
       e.preventDefault();
       setDeferred(e);
@@ -6366,6 +6539,8 @@ function App() {
           </Modal>
         )}
 
+        {activeModal === 'install' && <InstallModal onClose={closeModal} />}
+
         {activeModal === 'contact' && (
           <Modal title="Contact admin" onClose={closeModal}>
             <form className="form" onSubmit={handleSendAdminMessage}>
@@ -7527,6 +7702,8 @@ function App() {
           </Modal>
         )}
 
+        {activeModal === 'install' && <InstallModal onClose={closeModal} />}
+
         {activeModal === 'contact' && (
           <Modal title="Contact admin" onClose={closeModal}>
             <form className="form" onSubmit={handleSendAdminMessage}>
@@ -7588,6 +7765,9 @@ function App() {
 
 // The root adds the home screen prompt, which appears once a coach finishes registration
 export default function Root() {
+  if (window.location.pathname.startsWith('/auth-action')) {
+    return <AuthActionPage />;
+  }
   return (
     <>
       <App />
