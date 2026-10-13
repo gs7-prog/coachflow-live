@@ -147,6 +147,21 @@ Also check that an unverified account can finish the sign-up flow, and that a co
 
 ---
 
+### 2.10 Home screen app (progressive web app)
+
+BodUp can be added to a phone or computer home screen. It then opens full screen, like an app, without an app store. Files:
+
+- `public/manifest.json` (replaces any older manifest.json, which had a syntax error)
+- `public/icon-192.png`, `public/icon-512.png` (the home screen icons)
+- `public/service-worker.js` (lets the browser offer the install; it caches nothing, so records are always current)
+- `src/index.js` (replaces yours; it adds the manifest links and registers the service worker on the live site)
+
+Nothing else is needed. The install prompt appears once, bottom right, after a coach finishes registration. Pressing "Yes, do it now" uses the browser's install button where one exists. On iPhone there is no install button, so the prompt shows the steps (Share, then Add to Home Screen). Pressing "Do it later" or the cross stops the prompt from coming back on that device.
+
+To check it after deploying: open the site on your phone, sign in, and look for "Add to Home Screen" in the browser menu. The install prompt needs the https address (the Vercel site), not npm start.
+
+---
+
 ## 3. Using the new features
 
 - **Add feedback to calendar**: on any active client's page, on their card, or from the Calendar page. Pick Google Meet or email, check the previews, and add it. You get a reminder email and the client gets their email on the day.
