@@ -1,4 +1,4 @@
-# CoachFlow: calendar, Google Meet and email setup
+# BodUp: calendar, Google Meet and email setup
 
 The calendar page works as soon as you replace `App.js` and `App.css`. Two things need one-time setup before they do real work:
 
@@ -46,7 +46,8 @@ Copy these into the root of your project (next to `package.json`):
 
 - `api/send-reminders.js` (the daily sender)
 - `api/send-invite-reminder.js` (sends an invitation reminder straight away)
-- `api/_lib.js` (shared code used by both; the underscore keeps it from becoming an endpoint)
+- `api/_lib.js` (shared code used by all of them; the underscore keeps it from becoming an endpoint)
+- `api/admin.js` (everything the admin page needs, see 2.8)
 - `vercel.json` (if you already have one, merge the `crons` entry into it)
 
 ### 2.3 Resend
@@ -100,6 +101,24 @@ On a client who has not joined yet, **Send reminder** opens a preview of the ema
 - Limits, to prevent misuse: 5 reminders per client, at least 10 minutes apart, and 25 reminder emails per coach per day. The counters are kept on the client record and in a `rateLimits` collection that only the server writes to.
 - Only a signed-in coach can use it, and only for their own clients who have not joined yet.
 
+### 2.8 The admin account and admin page
+
+The admin page has an Overview, an Inbox (Contact admin messages), Users (close, reopen, suspend coaches), an Email log (with retry and cancel) and Billing.
+
+How it decides who the admin is: **the server checks the verified Google email against a list you set in Vercel.** Nothing in the database can make someone an admin, so a coach cannot promote themselves.
+
+1. Use a **separate Google account** for admin (not your coach login).
+2. In Vercel, add the environment variable `ADMIN_EMAILS` with that email address (several can be separated with commas). Redeploy.
+3. Open your site and click **Sign in with Google** with that account. You land on the admin page, and the account never gets a coach or client profile.
+4. If you land somewhere else, check the variable for typos and that you redeployed. The admin page works on the deployed site only, not with `npm start`, because it needs the `/api` functions.
+
+What the admin can do to accounts:
+- **Suspend a coach:** the coach can sign in but only sees a "suspended" page where they can write to you. Their automated emails are held and go out if you reactivate them within 3 days.
+- **Close an account:** the person cannot sign in. Reopening restores access. Closing a client also marks them as completed for their coach.
+- Admin accounts cannot be changed from the page, and every change is written to an `adminAudit` collection with your email and the time.
+
+The page shows personal data (names, emails, messages). Keep your admin Google account secure with 2-step verification, and mention the data you keep in your privacy notice.
+
 ---
 
 ## 3. Using the new features
@@ -147,7 +166,10 @@ match /subscriptions/{coachId} {
 }
 match /adminMessages/{id} {
   allow create: if request.auth != null && request.resource.data.coachId == request.auth.uid;
+  // no read rule: only the admin page reads these, through the server
 }
+match /adminAudit/{id} { allow read, write: if false; }
+match /rateLimits/{id} { allow read, write: if false; }
 ```
 
 The `clients`, `users`, `profiles` and `weeklyCheckIns` collections also need proper rules before real clients use the app. Those rules have to match how the app queries them (for example, a coach reads check-ins by client, and a client writes their own), and a rule that does not match a query blocks it. Ask for a dedicated pass on these, and test each change on a copy of the data first. After changing any rule, check that a client can still see their calendar. The server function reads everything through the Firebase Admin SDK, so these rules do not affect it.
