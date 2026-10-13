@@ -162,6 +162,32 @@ To check it after deploying: open the site on your phone, sign in, and look for 
 
 ---
 
+### 2.11 Branded confirmation email and confirm page (Firebase)
+
+Two things in Firebase make the sign-up email and the page after it look like BodUp.
+
+**A. The email**
+1. Firebase console > project **fitness-2e6c2** > **Authentication > Templates**.
+2. Open **Email address verification** and choose the edit (pencil) option.
+3. Set the **subject** to: `Confirm your BodUp email`
+4. Replace the message body with the contents of `email-templates/verify-email.html`. Change `YOUR-SITE` in the logo link to your live address. If the editor only accepts plain text, paste `email-templates/verify-email.txt` instead. Keep the `%LINK%` placeholder: Firebase fills it with each person's confirm link.
+5. Save.
+
+The sender address stays a Firebase address unless you connect your own domain in Firebase, so email programs may still show "Firebase" under the name BodUp. Keep the design as it is for now.
+
+**B. The page after the link (so it is BodUp, not a plain Firebase page)**
+1. In the same template screen, find **Customize action URL** (or the Action URL field).
+2. Enter: `https://YOUR-SITE/auth-action`
+3. Do the same for the **Password reset** template.
+4. Save.
+
+The app already has the `/auth-action` page: it confirms the email, or lets the person choose a new password, and shows a clear message for old or used links. Nothing else is needed for it.
+
+**C. Home screen name**
+The app's name on a phone or computer is now just "BodUp". An app that was already added to a device keeps its old name until it is removed and added again.
+
+---
+
 ## 3. Using the new features
 
 - **Add feedback to calendar**: on any active client's page, on their card, or from the Calendar page. Pick Google Meet or email, check the previews, and add it. You get a reminder email and the client gets their email on the day.
