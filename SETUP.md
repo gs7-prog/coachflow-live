@@ -121,6 +121,32 @@ The page shows personal data (names, emails, messages). Keep your admin Google a
 
 ---
 
+### 2.9 Registration: email sign-up and confirmation (Firebase)
+
+New coaches register with an email and password, and Firebase sends the confirmation email. This needs one switch in Firebase:
+
+1. Firebase console > project **fitness-2e6c2** > **Authentication > Sign-in method**.
+2. Enable **Email/Password**. Google stays enabled as the second option.
+3. Open **Authentication > Templates**. Edit **Email address verification** and **Password reset**: set the sender name to BodUp, and write the text in your own voice. The sender address stays a Firebase address unless you connect your own domain in Firebase.
+
+What is stored, and where:
+- `users/{uid}`: name, email, `onboardingComplete`, `onboardingStep`, the coaching answers under `onboarding`, `workspaceName`, `inviteSlug`, and `photoUrl` (a 256 px JPEG saved as text, so no storage bucket is needed).
+- `inviteLinks/{slug}`: one document per coach link. The slug must be unique.
+
+Rules to add to your Firestore rules (before real use). Coaches should only write their own record, and anyone signed in may read a link to check it is free:
+
+```
+match /inviteLinks/{slug} {
+  allow read: if request.auth != null;
+  allow create: if request.auth != null && request.resource.data.coachId == request.auth.uid;
+  allow update, delete: if false;
+}
+```
+
+Also check that an unverified account can finish the sign-up flow, and that a coach's `onboardingComplete` cannot be changed by anyone but the coach.
+
+---
+
 ## 3. Using the new features
 
 - **Add feedback to calendar**: on any active client's page, on their card, or from the Calendar page. Pick Google Meet or email, check the previews, and add it. You get a reminder email and the client gets their email on the day.
