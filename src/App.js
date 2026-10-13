@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithPopup, reauthenticateWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, signInWithPopup, reauthenticateWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail, updateProfile, deleteUser } from 'firebase/auth';
 import { getFirestore, collection, addDoc, query, where, getDocs, serverTimestamp, getDoc, doc, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import './App.css';
 
@@ -517,7 +517,14 @@ const ICONS_EXTRA = {
       <circle cx="12" cy="12" r="9" />
       <path d="M12 7v5l3 2" />
     </>
-  )
+  ),
+  camera: (
+    <>
+      <path d="M4 8h3l2-3h6l2 3h3v11H4z" />
+      <circle cx="12" cy="13" r="3.5" />
+    </>
+  ),
+  minus: <path d="M5 12h14" />
 };
 
 // ---------------------------------------------------------------------------
@@ -2486,6 +2493,903 @@ function LandingPage({ language, onLanguage, onLogin, onRegister }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Registration and onboarding for coaches (BodUp)
+// Steps: 1 create account, 2 welcome, 3 confirm email, 4 profile photo (skippable),
+// 5 coaching type, 6 niche, 7 six-month goals, 8 current tools, 9 client base, 10 workspace name
+// ---------------------------------------------------------------------------
+const ONB_TOTAL = 10;
+const COACH_TYPES = [
+  'Online Fitness Coach',
+  'In person personal trainer',
+  'Hybrid (online and in person)',
+  'Nutritionist / dietitian',
+  'Other'
+];
+const GOAL_OPTIONS = [
+  'Get my first paying clients',
+  'Grow the business (clients and income)',
+  'Increase what I charge',
+  'Save time on admin',
+  'Provide a better quality of service',
+  'Improve my retention',
+  'Other'
+];
+const TOOL_GROUPS = [
+  { label: 'Coaching platforms', items: ['TrueCoach', 'PT Distinction', 'Mindbody', 'My PT Hub', 'Trainerize', 'Everfit', 'Kahunas', 'Skool', 'Other'] },
+  { label: 'Admin and documents', items: ['Google Sheets / Excel', 'Notion', 'Google Drive', 'Other'] },
+  { label: 'Comms, scheduling and marketing', items: ['WhatsApp', 'Calendly', 'Mailchimp', 'ActiveCampaign', 'Kit', 'Other'] },
+  { label: 'Payments', items: ['PayPal', 'GoCardless', 'Stripe', 'Other'] }
+];
+const CLIENT_BASE_OPTIONS = ['0-5', '5-15', '15-30', '30-50', '50-100', '100+'];
+const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$/;
+const LETTERS = 'ABCDEFGHIJ';
+
+const slugify = (text) =>
+  String(text || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 30);
+
+const authErrorText = (err) => {
+  const code = (err && err.code) || '';
+  if (code === 'auth/email-already-in-use') return 'An account with this email already exists. Try signing in instead.';
+  if (code === 'auth/invalid-email') return 'Enter a valid email address.';
+  if (code === 'auth/weak-password') return 'Choose a stronger password (at least 8 characters).';
+  if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found') {
+    return 'Email or password is not right.';
+  }
+  if (code === 'auth/too-many-requests') return 'Too many attempts. Wait a few minutes and try again.';
+  if (code === 'auth/network-request-failed') return 'No connection. Check your internet and try again.';
+  return 'Something went wrong. Please try again.';
+};
+
+// Shared frame for the registration screens
+function OnbFrame({ step, children, footer, wide = false }) {
+  return (
+    <div className="onb">
+      <header className="onb-top">
+        <BrandMark size={30} />
+        {step && <span className="onb-step">Step {step} of {ONB_TOTAL}</span>}
+      </header>
+      {step && (
+        <div className="onb-progress" aria-hidden="true">
+          <span style={{ width: `${(step / ONB_TOTAL) * 100}%` }} />
+        </div>
+      )}
+      <main className={`onb-body ${wide ? 'wide' : ''}`}>{children}</main>
+      {footer && <footer className="onb-footer">{footer}</footer>}
+    </div>
+  );
+}
+
+function OnbOption({ letter, label, selected, onClick }) {
+  return (
+    <button type="button" className={`onb-option ${selected ? 'selected' : ''}`} aria-pressed={selected} onClick={onClick}>
+      <span>{label}</span>
+      {letter && <span className="onb-letter">{letter}</span>}
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Profile photo: drag to position, zoom, saved as a 256 px square
+// ---------------------------------------------------------------------------
+function PhotoPicker({ onUse, onCancel, busy = false, saveLabel = 'Use this photo' }) {
+  const VIEW = 300;
+  const OUT = 256;
+  const [src, setSrc] = useState('');
+  const [dims, setDims] = useState(null);
+  const [zoom, setZoom] = useState(1);
+  const [off, setOff] = useState({ x: 0, y: 0 });
+  const [error, setError] = useState('');
+  const drag = useRef(null);
+  const imgRef = useRef(null);
+
+  const base = dims ? Math.max(VIEW / dims.w, VIEW / dims.h) : 1;
+
+  // Keeps the photo covering the whole circle as the user drags or zooms
+  const clampOffset = (o, z) => {
+    if (!dims) return o;
+    const s = base * z;
+    const maxX = Math.max(0, (dims.w * s - VIEW) / 2);
+    const maxY = Math.max(0, (dims.h * s - VIEW) / 2);
+    return {
+      x: Math.min(maxX, Math.max(-maxX, o.x)),
+      y: Math.min(maxY, Math.max(-maxY, o.y))
+    };
+  };
+
+  const pickFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    setError('');
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setError('Choose an image file (JPG, PNG or similar).');
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setError('That image is larger than 10 MB. Choose a smaller one.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setDims(null);
+      setZoom(1);
+      setOff({ x: 0, y: 0 });
+      setSrc(reader.result);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const onImgLoad = (e) => {
+    setDims({ w: e.target.naturalWidth, h: e.target.naturalHeight });
+  };
+
+  const changeZoom = (value) => {
+    const z = Number(value);
+    setZoom(z);
+    setOff((prev) => clampOffset(prev, z));
+  };
+
+  const onPointerDown = (e) => {
+    drag.current = { x: e.clientX, y: e.clientY, o: off };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const onPointerMove = (e) => {
+    if (!drag.current) return;
+    const dx = e.clientX - drag.current.x;
+    const dy = e.clientY - drag.current.y;
+    setOff(clampOffset({ x: drag.current.o.x + dx, y: drag.current.o.y + dy }, zoom));
+  };
+
+  const endDrag = () => {
+    drag.current = null;
+  };
+
+  const crop = () => {
+    const s = base * zoom;
+    const size = VIEW / s;
+    const cx = dims.w / 2 - off.x / s;
+    const cy = dims.h / 2 - off.y / s;
+    const sx = Math.min(Math.max(0, cx - size / 2), dims.w - size);
+    const sy = Math.min(Math.max(0, cy - size / 2), dims.h - size);
+    const canvas = document.createElement('canvas');
+    canvas.width = OUT;
+    canvas.height = OUT;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, OUT, OUT);
+    ctx.drawImage(imgRef.current, sx, sy, size, size, 0, 0, OUT, OUT);
+    return canvas.toDataURL('image/jpeg', 0.85);
+  };
+
+  const use = () => {
+    if (!src || !dims) return;
+    onUse(crop());
+  };
+
+  const s = base * zoom;
+  return (
+    <div className="photo-picker">
+      {!src ? (
+        <label className="photo-drop">
+          <Icon name="camera" size={28} />
+          <strong>Choose a photo</strong>
+          <span>A clear photo of your face works best. JPG or PNG, up to 10 MB.</span>
+          <input type="file" accept="image/*" onChange={pickFile} />
+        </label>
+      ) : (
+        <>
+          <div
+            className="photo-view"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={endDrag}
+            onPointerCancel={endDrag}
+          >
+            <img
+              ref={imgRef}
+              src={src}
+              alt=""
+              draggable={false}
+              onLoad={onImgLoad}
+              className="photo-img"
+              style={
+                dims
+                  ? {
+                      width: dims.w * s,
+                      height: dims.h * s,
+                      transform: `translate(calc(-50% + ${off.x}px), calc(-50% + ${off.y}px))`
+                    }
+                  : { visibility: 'hidden' }
+              }
+            />
+            <div className="photo-mask" />
+          </div>
+          <div className="photo-zoom">
+            <Icon name="minus" size={16} />
+            <input
+              type="range"
+              min="1"
+              max="3"
+              step="0.01"
+              value={zoom}
+              onChange={(e) => changeZoom(e.target.value)}
+              aria-label="Zoom"
+            />
+            <Icon name="plus" size={16} />
+          </div>
+          <p className="field-hint">Drag to put your face in the circle, and zoom to fit.</p>
+          <div className="photo-actions">
+            <button type="button" className="btn-primary" disabled={!dims || busy} onClick={use}>
+              <Icon name="check" size={16} /> {busy ? 'Saving...' : saveLabel}
+            </button>
+            <label className="btn-secondary photo-change">
+              <Icon name="camera" size={16} /> Choose another
+              <input type="file" accept="image/*" onChange={pickFile} />
+            </label>
+          </div>
+        </>
+      )}
+      {error && <p className="form-message error">{error}</p>}
+      {onCancel && (
+        <button type="button" className="link-btn photo-cancel" onClick={onCancel}>Cancel</button>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Step 1: create account (split screen, as in the reference)
+// ---------------------------------------------------------------------------
+function AccountStep({ onBack, onSignIn, onGoogle, onCreated, onInviteCode }) {
+  const [form, setForm] = useState({ name: '', email: '', password: '', confirm: '', terms: false });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [show, setShow] = useState(false);
+
+  const set = (key) => (e) => setForm({ ...form, [key]: e.target.type === 'checkbox' ? e.target.checked : e.target.value });
+
+  const submit = async (e) => {
+    e.preventDefault();
+    const name = form.name.trim();
+    const email = form.email.trim();
+    if (!name) return setError('Enter your full name.');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return setError('Enter a valid email address.');
+    if (form.password.length < 8) return setError('Use at least 8 characters for your password.');
+    if (form.password !== form.confirm) return setError('The two passwords do not match.');
+    if (!form.terms) return setError('Please accept the terms to continue.');
+    setError('');
+    setBusy(true);
+    try {
+      const created = await createUserWithEmailAndPassword(auth, email, form.password);
+      await updateProfile(created.user, { displayName: name });
+      await setDoc(doc(db, 'users', created.user.uid), {
+        email,
+        displayName: name,
+        role: 'coach',
+        status: 'active',
+        onboardingComplete: false,
+        onboardingStep: 2,
+        onboarding: {},
+        createdAt: serverTimestamp()
+      });
+      await setDoc(
+        doc(db, 'coaches', created.user.uid),
+        { userId: created.user.uid, name, email, createdAt: serverTimestamp() },
+        { merge: true }
+      );
+      await sendEmailVerification(created.user);
+      onCreated({ name });
+    } catch (err) {
+      setError(authErrorText(err));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="onb onb-split-page">
+      <aside className="onb-side">
+        <BrandMark size={34} className="onb-side-brand" />
+        <span className="onb-pill">Start free</span>
+        <h1>Coaching, all in one place.</h1>
+        <p>Clients, check-ins, feedback sessions and learning, with your reminders handled for you.</p>
+        <ul>
+          <li><Icon name="check" size={16} /> Manage every client in one workspace</li>
+          <li><Icon name="check" size={16} /> Check-ins, feedback and learning</li>
+          <li><Icon name="check" size={16} /> Sessions and reminders in one calendar</li>
+        </ul>
+      </aside>
+
+      <main className="onb-form-side">
+        <button className="btn-back icon-text" onClick={onBack}>
+          <Icon name="back" size={16} /> Back to home
+        </button>
+        <h2>Create your account</h2>
+        <p className="onb-sub">Sign up free and we will bring you straight in.</p>
+
+        <form className="onb-form" onSubmit={submit}>
+          <input type="text" placeholder="Full name" autoComplete="name" value={form.name} onChange={set('name')} />
+          <input type="email" placeholder="Email address" autoComplete="email" value={form.email} onChange={set('email')} />
+          <div className="onb-password">
+            <input
+              type={show ? 'text' : 'password'}
+              placeholder="Create a password (8+ characters)"
+              autoComplete="new-password"
+              value={form.password}
+              onChange={set('password')}
+            />
+            <button type="button" className="link-btn" onClick={() => setShow(!show)}>{show ? 'Hide' : 'Show'}</button>
+          </div>
+          <input
+            type={show ? 'text' : 'password'}
+            placeholder="Confirm password"
+            autoComplete="new-password"
+            value={form.confirm}
+            onChange={set('confirm')}
+          />
+          <label className="check-row onb-terms">
+            <input type="checkbox" checked={form.terms} onChange={set('terms')} />
+            <span>I agree to the Terms of Service and Privacy Policy.</span>
+          </label>
+          {error && <p className="form-message error">{error}</p>}
+          <button type="submit" className="btn-primary onb-submit" disabled={busy}>
+            {busy ? 'Creating your account...' : 'Create account'}
+          </button>
+        </form>
+
+        <div className="onb-or"><span>or</span></div>
+        <button type="button" className="btn-secondary onb-google" onClick={onGoogle}>Register with Google</button>
+        <p className="onb-switch">
+          Already have an account? <button type="button" className="link-btn" onClick={onSignIn}>Sign in</button>
+        </p>
+        <p className="onb-switch">
+          Are you a client with an invite code? <button type="button" className="link-btn" onClick={onInviteCode}>Join here</button>
+        </p>
+      </main>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Step 2: welcome
+// ---------------------------------------------------------------------------
+function WelcomeStep({ name, onNext }) {
+  return (
+    <OnbFrame
+      step={2}
+      footer={<button className="btn-primary onb-next" onClick={onNext}>Start your setup <Icon name="expand" size={16} /></button>}
+    >
+      <div className="onb-welcome">
+        <p className="onb-hello">{firstName(name)}, you made it.</p>
+        <h1>Welcome to <span className="grad-text">BodUp.</span></h1>
+        <p className="onb-sub">
+          A few short steps to set up your coaching space. Everything can be changed later.
+        </p>
+      </div>
+    </OnbFrame>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Step 3: confirm email (checks automatically)
+// ---------------------------------------------------------------------------
+function VerifyStep({ user, onVerified, onStartOver }) {
+  const [sent, setSent] = useState('');
+  const [cooldown, setCooldown] = useState(0);
+  const [checking, setChecking] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [error, setError] = useState('');
+
+  const check = async () => {
+    const current = auth.currentUser;
+    if (!current) return false;
+    setChecking(true);
+    try {
+      await current.reload();
+      if (current.emailVerified) {
+        onVerified();
+        return true;
+      }
+      return false;
+    } catch (err) {
+      setError('Could not check right now. We will try again.');
+      return false;
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  // Watch for the confirmation every few seconds, so the user does not have to press anything
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (auth.currentUser) check();
+    }, 3000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (cooldown <= 0) return undefined;
+    const t = setTimeout(() => setCooldown(cooldown - 1), 1000);
+    return () => clearTimeout(t);
+  }, [cooldown]);
+
+  const resend = async () => {
+    setError('');
+    try {
+      await sendEmailVerification(auth.currentUser);
+      setSent('A new confirmation email is on its way.');
+      setCooldown(30);
+    } catch (err) {
+      setError('Please wait a little before asking for another email.');
+    }
+  };
+
+  const startAgain = async () => {
+    if (!window.confirm('Start again with a different email? This removes the account you just created.')) return;
+    onStartOver();
+  };
+
+  const email = user.email || 'your email';
+  return (
+    <OnbFrame
+      step={3}
+      footer={
+        <button className="btn-secondary" onClick={check} disabled={checking}>
+          {checking ? 'Checking...' : 'Already confirmed? Check now'}
+        </button>
+      }
+    >
+      <div className="onb-split">
+        <div className="onb-split-text">
+          <span className="onb-eyebrow">One quick check</span>
+          <h1>Confirm your <span className="grad-text">email.</span></h1>
+          <p className="onb-sub">
+            We have sent a confirmation link to <strong>{email}</strong>. Open it on this device or on your phone. This page
+            moves on automatically the moment you confirm.
+          </p>
+          <div className="onb-status"><span className="onb-dot" /> Checking automatically for your confirmation</div>
+          <div className="onb-inline-actions">
+            <button className="btn-primary" onClick={resend} disabled={cooldown > 0}>
+              {cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend confirmation email'}
+            </button>
+            <button className="link-btn" onClick={() => setShowHelp(!showHelp)}>Didn't get it?</button>
+            <button className="link-btn" onClick={startAgain}>Wrong email? Start again</button>
+          </div>
+          {showHelp && (
+            <p className="field-hint">
+              Check your spam or junk folder, and make sure the address above is right. The email comes from Firebase, the
+              sign-in service behind BodUp.
+            </p>
+          )}
+          {sent && <p className="form-message success">{sent}</p>}
+          {error && <p className="form-message error">{error}</p>}
+        </div>
+        <div className="onb-split-art" aria-hidden="true">
+          <div className="inbox-card">
+            <div className="inbox-head">
+              <span>Inbox</span>
+              <span className="inbox-badge">1</span>
+            </div>
+            <div className="inbox-mail">
+              <span className="inbox-avatar">B</span>
+              <div>
+                <strong>BodUp</strong>
+                <small>to {email}</small>
+              </div>
+            </div>
+            <h3>Confirm your email address</h3>
+            <div className="inbox-lines"><span /><span /><span /></div>
+            <div className="inbox-button">Confirm email address</div>
+          </div>
+        </div>
+      </div>
+    </OnbFrame>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Steps 4 to 10
+// ---------------------------------------------------------------------------
+function OnboardingFlow({ user, startStep, startAnswers, onFinished, onStartOver }) {
+  const [step, setStep] = useState(startStep || 2);
+  const [a, setA] = useState({
+    coachType: '',
+    niche: '',
+    goals: [],
+    tools: [],
+    clientBase: '',
+    workspaceName: '',
+    slug: '',
+    photoUrl: '',
+    ...(startAnswers || {})
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [photoMode, setPhotoMode] = useState(false);
+  const name = user.displayName || '';
+
+  // Saves progress, so the setup can be resumed after a refresh or a new visit
+  const save = async (nextStep, patch = {}) => {
+    setBusy(true);
+    setError('');
+    try {
+      const next = { ...a, ...patch };
+      await setDoc(
+        doc(db, 'users', user.uid),
+        { onboardingStep: nextStep, onboarding: next, lastUpdated: serverTimestamp() },
+        { merge: true }
+      );
+      setA(next);
+      setStep(nextStep);
+      setPhotoMode(false);
+      return true;
+    } catch (err) {
+      setError('Could not save. Check your connection and try again.');
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const back = () => setStep(Math.max(4, step - 1));
+
+  const toggle = (list, value) => (list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
+
+  const finish = async () => {
+    const workspaceName = a.workspaceName.trim();
+    const slug = slugify(a.slug);
+    if (workspaceName.length < 2) return setError('Name your workspace (at least 2 characters).');
+    if (!SLUG_PATTERN.test(slug)) return setError('Your link needs 3 to 30 letters or numbers, for example "your-name".');
+    setBusy(true);
+    setError('');
+    try {
+      const taken = await getDoc(doc(db, 'inviteLinks', slug));
+      if (taken.exists() && taken.data().coachId !== user.uid) {
+        setError('That link is already taken. Try another one.');
+        setBusy(false);
+        return;
+      }
+      await setDoc(doc(db, 'inviteLinks', slug), { coachId: user.uid, createdAt: serverTimestamp() }, { merge: true });
+      await setDoc(
+        doc(db, 'users', user.uid),
+        {
+          workspaceName,
+          inviteSlug: slug,
+          onboarding: { ...a, workspaceName, slug },
+          onboardingStep: ONB_TOTAL,
+          onboardingComplete: true,
+          completedAt: serverTimestamp()
+        },
+        { merge: true }
+      );
+      onFinished();
+    } catch (err) {
+      setError('Could not finish setup. Try again.');
+      setBusy(false);
+    }
+  };
+
+  if (step === 2) {
+    return <WelcomeStep name={name} onNext={() => save(3)} />;
+  }
+
+  if (step === 3) {
+    return (
+      <VerifyStep
+        user={user}
+        onVerified={() => save(4)}
+        onStartOver={onStartOver}
+      />
+    );
+  }
+
+  const footerNav = (onNext, nextLabel, nextDisabled, backAllowed = true) => (
+    <div className="onb-nav">
+      {backAllowed ? (
+        <button className="btn-back icon-text" onClick={back} disabled={busy}>
+          <Icon name="back" size={16} /> Back
+        </button>
+      ) : <span />}
+      <button className="btn-primary onb-next" onClick={onNext} disabled={busy || nextDisabled}>
+        {busy ? 'Saving...' : nextLabel} <Icon name="expand" size={16} />
+      </button>
+    </div>
+  );
+
+  if (step === 4) {
+    if (photoMode) {
+      return (
+        <OnbFrame step={4} footer={null}>
+          <div className="onb-center">
+            <h1 className="onb-title">Upload a <span className="grad-text">profile</span> picture of yourself</h1>
+            <PhotoPicker
+              busy={busy}
+              onUse={(dataUrl) => save(5, { photoUrl: dataUrl })}
+              onCancel={() => setPhotoMode(false)}
+            />
+          </div>
+        </OnbFrame>
+      );
+    }
+    return (
+      <OnbFrame step={4} footer={null}>
+        <div className="onb-center">
+          <h1 className="onb-title">Add a <span className="grad-text">profile</span> picture</h1>
+          <p className="onb-sub">Clients see your photo when they open CoachFlow with your invite. You can skip this and add one later under My profile.</p>
+          <div className="onb-photo-choice">
+            <button className="btn-primary" onClick={() => setPhotoMode(true)}>
+              <Icon name="camera" size={16} /> Add a photo
+            </button>
+            <button className="btn-secondary" onClick={() => save(5)} disabled={busy}>Skip for now</button>
+          </div>
+          {error && <p className="form-message error">{error}</p>}
+          <div className="onb-nav">
+            <button className="btn-back icon-text" disabled>
+              <Icon name="back" size={16} /> Back
+            </button>
+            <span />
+          </div>
+        </div>
+      </OnbFrame>
+    );
+  }
+
+  if (step === 5) {
+    return (
+      <OnbFrame step={5} footer={footerNav(() => save(6, { coachType: a.coachType }), 'Next', !a.coachType)}>
+        <div className="onb-center">
+          <span className="onb-eyebrow">Question 1 of 6</span>
+          <h1 className="onb-title">What type of coach are <span className="grad-text">you?</span></h1>
+          <p className="onb-sub">Pick the option which best describes you.</p>
+          <div className="onb-options">
+            {COACH_TYPES.map((t, i) => (
+              <OnbOption key={t} letter={LETTERS[i]} label={t} selected={a.coachType === t} onClick={() => setA({ ...a, coachType: t })} />
+            ))}
+          </div>
+          {error && <p className="form-message error">{error}</p>}
+        </div>
+      </OnbFrame>
+    );
+  }
+
+  if (step === 6) {
+    return (
+      <OnbFrame step={6} footer={footerNav(() => save(7, { niche: a.niche.trim() }), 'Next', !a.niche.trim())}>
+        <div className="onb-center narrow">
+          <span className="onb-eyebrow">Question 2 of 6</span>
+          <h1 className="onb-title">What is your <span className="grad-text">coaching niche?</span></h1>
+          <p className="onb-sub">Who do you typically coach?</p>
+          <input
+            className="onb-input"
+            type="text"
+            maxLength={80}
+            placeholder="Type your answer..."
+            value={a.niche}
+            onChange={(e) => setA({ ...a, niche: e.target.value })}
+          />
+          {error && <p className="form-message error">{error}</p>}
+        </div>
+      </OnbFrame>
+    );
+  }
+
+  if (step === 7) {
+    return (
+      <OnbFrame step={7} footer={footerNav(() => save(8, { goals: a.goals }), 'Next', a.goals.length === 0)}>
+        <div className="onb-center narrow">
+          <span className="onb-eyebrow">Question 3 of 6</span>
+          <h1 className="onb-title">What is your main goal <span className="grad-text">for the next 6 months?</span></h1>
+          <p className="onb-sub">Choose all which apply to you.</p>
+          <div className="onb-options">
+            {GOAL_OPTIONS.map((g) => (
+              <OnbOption
+                key={g}
+                label={g}
+                selected={a.goals.includes(g)}
+                onClick={() => setA({ ...a, goals: toggle(a.goals, g) })}
+              />
+            ))}
+          </div>
+          {error && <p className="form-message error">{error}</p>}
+        </div>
+      </OnbFrame>
+    );
+  }
+
+  if (step === 8) {
+    return (
+      <OnbFrame step={8} footer={footerNav(() => save(9, { tools: a.tools }), 'Next', a.tools.length === 0)} wide>
+        <div className="onb-center">
+          <span className="onb-eyebrow">Question 4 of 6</span>
+          <h1 className="onb-title">How are you currently running <span className="grad-text">your coaching business?</span></h1>
+          <p className="onb-sub">Let us know what tools you are using at the moment.</p>
+          {TOOL_GROUPS.map((group) => (
+            <div key={group.label} className="onb-tool-group">
+              <span className="onb-group-label">{group.label}</span>
+              <div className="onb-chips">
+                {group.items.map((t) => (
+                  <button
+                    key={`${group.label}-${t}`}
+                    type="button"
+                    className={`onb-chip-pill ${a.tools.includes(t) ? 'selected' : ''}`}
+                    aria-pressed={a.tools.includes(t)}
+                    onClick={() => setA({ ...a, tools: toggle(a.tools, t) })}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+          {error && <p className="form-message error">{error}</p>}
+        </div>
+      </OnbFrame>
+    );
+  }
+
+  if (step === 9) {
+    return (
+      <OnbFrame step={9} footer={footerNav(() => save(10, { clientBase: a.clientBase }), 'Continue', !a.clientBase)}>
+        <div className="onb-center narrow">
+          <span className="onb-eyebrow">Question 5 of 6</span>
+          <h1 className="onb-title">How many active clients <span className="grad-text">do you have?</span></h1>
+          <p className="onb-sub">This helps us set up your dashboard best for you.</p>
+          <div className="onb-options">
+            {CLIENT_BASE_OPTIONS.map((c, i) => (
+              <OnbOption key={c} letter={LETTERS[i]} label={c} selected={a.clientBase === c} onClick={() => setA({ ...a, clientBase: c })} />
+            ))}
+          </div>
+          {error && <p className="form-message error">{error}</p>}
+        </div>
+      </OnbFrame>
+    );
+  }
+
+  // Step 10: name the workspace and choose the invite link
+  const slugPreview = slugify(a.slug || a.workspaceName) || 'your-name';
+  const host = window.location.host;
+  return (
+    <OnbFrame
+      step={10}
+      footer={
+        <div className="onb-nav">
+          <button className="btn-back icon-text" onClick={back} disabled={busy}>
+            <Icon name="back" size={16} /> Back
+          </button>
+          <button className="btn-primary onb-next" onClick={finish} disabled={busy}>
+            {busy ? 'Finishing...' : 'Finish setup'} <Icon name="expand" size={16} />
+          </button>
+        </div>
+      }
+    >
+      <div className="onb-split">
+        <div className="onb-split-text">
+          <span className="onb-eyebrow">Workspace setup</span>
+          <h1>Name your <span className="grad-text">workspace.</span></h1>
+          <p className="onb-sub">This is your home on BodUp. Your clients see it when they join with your invite.</p>
+
+          <div className="onb-field">
+            <label>Workspace name</label>
+            <input
+              type="text"
+              placeholder="Your business name"
+              maxLength={60}
+              value={a.workspaceName}
+              onChange={(e) => {
+                const value = e.target.value;
+                setA({ ...a, workspaceName: value, slug: a.slug ? a.slug : slugify(value) });
+              }}
+            />
+          </div>
+
+          <div className="onb-field">
+            <label>Your invite link</label>
+            <div className="onb-link">
+              <span className="onb-link-prefix">{host}/@</span>
+              <input
+                type="text"
+                placeholder="your-name"
+                maxLength={30}
+                value={a.slug}
+                onChange={(e) => setA({ ...a, slug: slugify(e.target.value) })}
+              />
+            </div>
+            <small className="field-hint">Letters, numbers and dashes. You can share this link with clients.</small>
+          </div>
+
+          {error && <p className="form-message error">{error}</p>}
+        </div>
+
+        <div className="onb-split-art" aria-hidden="true">
+          <div className="workspace-preview">
+            <div className="workspace-preview-head">
+              <span className="workspace-avatar">{initialOf(a.workspaceName || 'B')}</span>
+              <div>
+                <strong>{a.workspaceName || 'Your business name'}</strong>
+                <small>{host}/@{slugPreview}</small>
+              </div>
+            </div>
+            <div className="workspace-preview-body">
+              <p>Join my coaching with the invite code I send you.</p>
+              <div className="workspace-preview-chip">Join with invite code</div>
+            </div>
+            <div className="workspace-preview-foot">
+              <span className="level-pill green">Running good</span>
+              <span className="level-pill yellow">Keep watch</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </OnbFrame>
+  );
+}
+
+// Shown to a signed-in person whose account data is still loading
+function LoadingScreen({ onSignOut }) {
+  return (
+    <div className="login-container">
+      <div className="login-card">
+        <p className="empty-state">Loading your account...</p>
+        <button className="btn-secondary" onClick={onSignOut}>Sign out</button>
+      </div>
+    </div>
+  );
+}
+
+// Email and password sign-in, with password reset
+function EmailSignIn() {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState(null);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!email.trim() || !password) return setMessage({ type: 'error', text: 'Enter your email and password.' });
+    setBusy(true);
+    setMessage(null);
+    try {
+      await signInWithEmailAndPassword(auth, email.trim(), password);
+    } catch (err) {
+      setMessage({ type: 'error', text: authErrorText(err) });
+      setBusy(false);
+    }
+  };
+
+  const reset = async () => {
+    if (!email.trim()) return setMessage({ type: 'error', text: 'Type your email above first, then press Forgot password.' });
+    try {
+      await sendPasswordResetEmail(auth, email.trim());
+      setMessage({ type: 'success', text: 'If an account exists for that email, a reset link is on its way.' });
+    } catch (err) {
+      setMessage({ type: 'error', text: authErrorText(err) });
+    }
+  };
+
+  return (
+    <form className="form email-sign-in" onSubmit={submit}>
+      <div className="form-group">
+        <label>Email</label>
+        <input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+      </div>
+      <div className="form-group">
+        <label>Password</label>
+        <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+      </div>
+      {message && <p className={`form-message ${message.type}`}>{message.text}</p>}
+      <button type="submit" className="btn-primary" disabled={busy}>{busy ? 'Signing in...' : 'Sign in'}</button>
+      <button type="button" className="link-btn email-reset" onClick={reset}>Forgot password?</button>
+    </form>
+  );
+}
+
 function App() {
   const [user, setUser] = useState(null);
   const [userRole, setUserRole] = useState(null);
@@ -2544,6 +3448,10 @@ function App() {
   // Invite code flow state
   const [showInviteCodeInput, setShowInviteCodeInput] = useState(false);
   const [authView, setAuthView] = useState('landing');
+  const [onboardingComplete, setOnboardingComplete] = useState(null);
+  const [onboardingStep, setOnboardingStep] = useState(2);
+  const [onboardingData, setOnboardingData] = useState({});
+  const [profilePhotoEditing, setProfilePhotoEditing] = useState(false);
   const [inviteCodeInput, setInviteCodeInput] = useState('');
   const [inviteCodeError, setInviteCodeError] = useState('');
 
@@ -2566,6 +3474,10 @@ function App() {
         }
         setLoginNotice('');
         setAccountStatus(userDoc.data().status || 'active');
+        // Accounts created before onboarding existed count as complete
+        setOnboardingComplete(userDoc.data().onboardingComplete !== false);
+        setOnboardingStep(userDoc.data().onboardingStep || 2);
+        setOnboardingData(userDoc.data().onboarding || {});
         setUserRole(userDoc.data().role);
         setCoachProfile(userDoc.data());
         if (userDoc.data().role === 'coach') {
@@ -2742,6 +3654,10 @@ function App() {
           email: googleUser.email,
           displayName: googleUser.displayName,
           role: 'coach',
+          status: 'active',
+          onboardingComplete: false,
+          onboardingStep: 4,
+          onboarding: {},
           createdAt: serverTimestamp()
         });
 
@@ -2752,6 +3668,9 @@ function App() {
           createdAt: serverTimestamp()
         });
 
+        setOnboardingComplete(false);
+        setOnboardingStep(4);
+        setOnboardingData({});
         setUserRole('coach');
       }
     } catch (error) {
@@ -2790,6 +3709,10 @@ function App() {
       setShowInviteCodeInput(false);
       setInviteCodeInput('');
       setAuthView('landing');
+      setOnboardingComplete(null);
+      setOnboardingStep(2);
+      setOnboardingData({});
+      setProfilePhotoEditing(false);
     } catch (error) {
       console.error('Sign out error:', error);
     }
@@ -3056,6 +3979,46 @@ function App() {
   useEffect(() => {
     document.title = 'BodUp';
   }, []);
+
+  const handleAccountCreated = ({ name }) => {
+    setCoachProfile({ displayName: name });
+    setOnboardingComplete(false);
+    setOnboardingStep(2);
+    setOnboardingData({});
+    setUserRole('coach');
+  };
+
+  // Removes an account that is being started again (for example a wrong email)
+  const handleStartOver = async () => {
+    const current = auth.currentUser;
+    try {
+      if (current) {
+        await deleteDoc(doc(db, 'users', current.uid)).catch(() => {});
+        await deleteDoc(doc(db, 'coaches', current.uid)).catch(() => {});
+        await deleteUser(current);
+      }
+    } catch (err) {
+      console.error('Could not remove the account:', err);
+      setLoginNotice('We could not remove that account. Contact the BodUp admin.');
+    }
+    await handleSignOut();
+    setAuthView('register');
+  };
+
+  const handleSaveCoachPhoto = async (dataUrl) => {
+    try {
+      setLoading(true);
+      await setDoc(doc(db, 'users', user.uid), { photoUrl: dataUrl, lastUpdated: serverTimestamp() }, { merge: true });
+      setCoachProfile((prev) => ({ ...(prev || {}), photoUrl: dataUrl }));
+      setProfilePhotoEditing(false);
+      setModalMessage({ type: 'success', text: 'Photo saved.' });
+    } catch (error) {
+      console.error('Error saving photo:', error);
+      setModalMessage({ type: 'error', text: 'Could not save the photo. Try again.' });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // ---- Billing (demo mode: nothing is charged) ----
   const fetchBilling = async (coachId) => {
@@ -3794,7 +4757,21 @@ function App() {
         />
       );
     }
-    const registering = authView === 'register';
+    if (authView === 'register' && !loginNotice) {
+      return (
+        <AccountStep
+          onBack={() => setAuthView('landing')}
+          onSignIn={() => setAuthView('login')}
+          onGoogle={handleGoogleSignIn}
+          onCreated={handleAccountCreated}
+          onInviteCode={() => {
+            setLoginNotice('');
+            setShowInviteCodeInput(true);
+            setAuthView('login');
+          }}
+        />
+      );
+    }
     return (
       <div className="login-container">
         <div className="login-card">
@@ -3809,16 +4786,17 @@ function App() {
             <Icon name="back" size={16} /> Back to home
           </button>
           <BrandMark size={44} className="auth-brand" />
-          <h1>{registering ? 'Create your account' : 'Welcome back'}</h1>
-          <p className="subtitle">
-            {registering
-              ? 'Coaches start free. Clients join with the invite code from their coach.'
-              : 'Sign in to continue to BodUp.'}
-          </p>
+          <h1>Welcome back</h1>
+          <p className="subtitle">Sign in to continue to BodUp.</p>
           {loginNotice && <p className="login-notice">{loginNotice}</p>}
+          <EmailSignIn />
+          <div className="onb-or"><span>or</span></div>
           <button className="google-btn" onClick={handleGoogleSignIn}>
-            {registering ? 'Register with Google' : 'Sign in with Google'}
+            Sign in with Google
           </button>
+          <p className="onb-switch">
+            New to BodUp? <button className="link-btn" onClick={() => setAuthView('register')}>Create an account</button>
+          </p>
           <button 
             className="btn-secondary" 
             onClick={() => setShowInviteCodeInput(!showInviteCodeInput)}
@@ -3953,6 +4931,23 @@ function App() {
   if (accountStatus === 'suspended') {
     return (
       <SuspendedPage user={user} onSignOut={handleSignOut} onSend={handleSendAdminMessage} message={modalMessage} loading={loading} />
+    );
+  }
+
+  if (user && !userRole) {
+    return <LoadingScreen onSignOut={handleSignOut} />;
+  }
+
+  if (userRole === 'coach' && onboardingComplete === false) {
+    return (
+      <OnboardingFlow
+        key={user.uid}
+        user={user}
+        startStep={onboardingStep}
+        startAnswers={onboardingData}
+        onFinished={() => loadUserData(user.uid)}
+        onStartOver={handleStartOver}
+      />
     );
   }
 
@@ -4198,7 +5193,7 @@ function App() {
           </div>
 
           <div className="coach-chip" title={coachName}>
-            <span className="client-avatar coach-avatar">{initialOf(coachName)}</span>
+            {coachProfile?.photoUrl ? <img className="coach-photo" src={coachProfile.photoUrl} alt="" /> : <span className="client-avatar coach-avatar">{initialOf(coachName)}</span>}
             <span className="nav-label coach-chip-text">
               <span className="coach-chip-name">{coachName}</span>
               <span className="coach-chip-role">Coach</span>
@@ -5133,6 +6128,25 @@ function App() {
         {activeModal === 'profile' && (
           <Modal title="Update profile" onClose={closeModal}>
             <form className="form" onSubmit={handleSaveCoachProfile}>
+                <div className="profile-photo-row">
+                  {coachProfile?.photoUrl ? (
+                    <img className="profile-photo" src={coachProfile.photoUrl} alt="" />
+                  ) : (
+                    <span className="client-avatar xlarge">{initialOf(coachName)}</span>
+                  )}
+                  {profilePhotoEditing ? (
+                    <PhotoPicker
+                      busy={loading}
+                      saveLabel="Save photo"
+                      onUse={handleSaveCoachPhoto}
+                      onCancel={() => setProfilePhotoEditing(false)}
+                    />
+                  ) : (
+                    <button type="button" className="btn-secondary" onClick={() => setProfilePhotoEditing(true)}>
+                      Change photo
+                    </button>
+                  )}
+                </div>
               <div className="form-group">
                 <label>Full name</label>
                 <input type="text" name="displayName" defaultValue={coachName} required />
