@@ -30,15 +30,18 @@ async function identify(req) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
   if (!token) return null;
-  getDb();
+  const db = getDb();
   try {
     const decoded = await admin.auth().verifyIdToken(token);
     const email = String(decoded.email || '').toLowerCase();
-    return {
-      uid: decoded.uid,
-      email,
-      isAdmin: decoded.email_verified === true && !!email && adminEmails().includes(email)
-    };
+    const verified = decoded.email_verified === true && !!email;
+    let isAdmin = verified && adminEmails().includes(email);
+    if (verified && !isAdmin) {
+      // Admins added from the admin page are stored in the "admins" collection (written by the server only)
+      const row = await db.collection('admins').doc(email).get();
+      isAdmin = row.exists;
+    }
+    return { uid: decoded.uid, email, isAdmin };
   } catch (err) {
     return null;
   }
@@ -137,11 +140,13 @@ async function setMessageStatus(db, body, who) {
 }
 
 async function users(db) {
-  const [userList, clients, subs] = await Promise.all([
+  const [userList, clients, subs, adminRows] = await Promise.all([
     readAll(db, 'users'),
     readAll(db, 'clients'),
-    readAll(db, 'subscriptions')
+    readAll(db, 'subscriptions'),
+    readAll(db, 'admins')
   ]);
+  const adminSet = new Set([...adminEmails(), ...adminRows.map((r) => r.id)]);
   const names = Object.fromEntries(userList.map((u) => [u.id, u.displayName || u.email || u.id]));
   const clientCount = {};
   const coachOfUser = {};
@@ -160,6 +165,7 @@ async function users(db) {
         displayName: u.displayName || '',
         role: u.role || '',
         status: u.status || 'active',
+        isAdmin: adminSet.has(String(u.email || '').toLowerCase()),
         createdAt: iso(u.createdAt),
         clientCount: u.role === 'coach' ? clientCount[u.id] || 0 : null,
         coachName: u.role === 'client' && coachOfUser[u.id] ? names[coachOfUser[u.id]] || '' : '',
@@ -332,6 +338,343 @@ async function billing(db) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Settings documents (plans, partners, site: season and maintenance)
+// ---------------------------------------------------------------------------
+const today = () => new Date().toISOString().slice(0, 10);
+const cleanText = (v, max) => String(v == null ? '' : v).trim().slice(0, max);
+
+async function readSetting(db, id) {
+  const snap = await db.collection('settings').doc(id).get();
+  return snap.exists ? snap.data() : null;
+}
+
+async function plansGet(db) {
+  const row = await readSetting(db, 'plans');
+  return { plans: row ? row.plans : null };
+}
+
+async function plansSave(db, body, who) {
+  if (!Array.isArray(body.plans) || body.plans.length === 0 || body.plans.length > 6) throw new HttpError(400, 'Send between 1 and 6 plans.');
+  const plans = body.plans.map((p, i) => {
+    const price = Number(p.price);
+    if (!Number.isFinite(price) || price < 0 || price > 10000) throw new HttpError(400, `Price for ${p.name || 'a plan'} is not valid.`);
+    const name = cleanText(p.name, 40);
+    if (!name) throw new HttpError(400, 'Every plan needs a name.');
+    const features = (Array.isArray(p.features) ? p.features : String(p.features || '').split('\n'))
+      .map((f) => cleanText(f, 120)).filter(Boolean).slice(0, 12);
+    return {
+      id: cleanText(p.id, 30) || `plan-${i + 1}`,
+      name,
+      price: Math.round(price * 100) / 100,
+      tagline: cleanText(p.tagline, 120),
+      features,
+      active: p.active !== false
+    };
+  });
+  await db.collection('settings').doc('plans').set({ plans, updatedAt: admin.firestore.FieldValue.serverTimestamp(), updatedBy: who.email });
+  await audit(db, who, 'plans-save', 'settings/plans', plans.map((p) => `${p.name} ${p.price}`).join(', '));
+  return { ok: true };
+}
+
+async function partnersGet(db) {
+  const row = await readSetting(db, 'partners');
+  return { partners: row ? row.partners : null };
+}
+
+async function partnersSave(db, body, who) {
+  if (!Array.isArray(body.partners) || body.partners.length > 50) throw new HttpError(400, 'Invalid partner list.');
+  const partners = body.partners.map((p) => {
+    const name = cleanText(p.name, 60);
+    const url = cleanText(p.url, 200);
+    if (!name) throw new HttpError(400, 'Every partner needs a name.');
+    if (!/^https:\/\/[^\s]+$/.test(url)) throw new HttpError(400, `The link for ${name} must start with https://`);
+    return {
+      id: cleanText(p.id, 40) || slugify(name),
+      name,
+      url,
+      description: cleanText(p.description, 200),
+      active: p.active !== false
+    };
+  });
+  await db.collection('settings').doc('partners').set({ partners, updatedAt: admin.firestore.FieldValue.serverTimestamp(), updatedBy: who.email });
+  await audit(db, who, 'partners-save', 'settings/partners', partners.map((p) => p.name).join(', '));
+  return { ok: true };
+}
+
+const slugify = (text) =>
+  String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+
+async function siteGet(db) {
+  const row = await readSetting(db, 'site');
+  return { season: row?.season || 'default', maintenance: row?.maintenance || { enabled: false, message: '' } };
+}
+
+async function siteSave(db, body, who) {
+  const season = String(body.season || 'default');
+  if (!['default', 'christmas', 'summer'].includes(season)) throw new HttpError(400, 'Unknown season.');
+  const maintenance = {
+    enabled: body.maintenance && body.maintenance.enabled === true,
+    message: cleanText(body.maintenance && body.maintenance.message, 300) || 'BodUp is undergoing maintenance. Please try again shortly.'
+  };
+  await db.collection('settings').doc('site').set({ season, maintenance, updatedAt: admin.firestore.FieldValue.serverTimestamp(), updatedBy: who.email }, { merge: true });
+  await audit(db, who, 'site-save', 'settings/site', `season=${season}, maintenance=${maintenance.enabled}`);
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Coupons
+// ---------------------------------------------------------------------------
+async function couponsList(db) {
+  const list = await readAll(db, 'coupons');
+  return {
+    coupons: list
+      .sort((a, b) => time(b.createdAt) - time(a.createdAt))
+      .map((c) => ({
+        code: c.id, type: c.type, value: c.value, validUntil: c.validUntil || null,
+        maxUses: c.maxUses || 0, uses: c.uses || 0, active: c.active !== false
+      }))
+  };
+}
+
+async function couponSave(db, body, who) {
+  const code = cleanText(body.code, 20).toUpperCase();
+  if (!/^[A-Z0-9-]{3,20}$/.test(code)) throw new HttpError(400, 'Codes use 3 to 20 letters, numbers or dashes.');
+  const type = body.type === 'amount' ? 'amount' : 'percent';
+  const value = Number(body.value);
+  if (!Number.isFinite(value) || value <= 0 || (type === 'percent' && value > 100)) throw new HttpError(400, 'Enter a valid discount.');
+  const validUntil = body.validUntil ? String(body.validUntil) : null;
+  if (validUntil && !/^\d{4}-\d{2}-\d{2}$/.test(validUntil)) throw new HttpError(400, 'Expiry date must be a date.');
+  const maxUses = Math.max(0, Math.floor(Number(body.maxUses) || 0));
+  const ref = db.collection('coupons').doc(code);
+  const existing = await ref.get();
+  await ref.set({
+    code, type, value: Math.round(value * 100) / 100, validUntil, maxUses,
+    active: body.active !== false,
+    uses: existing.exists ? existing.data().uses || 0 : 0,
+    createdAt: existing.exists ? existing.data().createdAt : admin.firestore.FieldValue.serverTimestamp()
+  }, { merge: true });
+  await audit(db, who, 'coupon-save', code, `${type} ${value}`);
+  return { ok: true };
+}
+
+async function couponToggle(db, body, who) {
+  const ref = db.collection('coupons').doc(cleanText(body.code, 20).toUpperCase());
+  const snap = await ref.get();
+  if (!snap.exists) throw new HttpError(404, 'Coupon not found.');
+  await ref.update({ active: body.active === true });
+  await audit(db, who, 'coupon-toggle', snap.id, body.active === true ? 'on' : 'off');
+  return { ok: true };
+}
+
+// Checks a code against the plan price. Used by coaches at checkout and by the admin to test.
+async function checkCoupon(db, code, planId) {
+  const snap = await db.collection('coupons').doc(cleanText(code, 20).toUpperCase()).get();
+  if (!snap.exists) return { valid: false, reason: 'This code does not exist.' };
+  const c = snap.data();
+  if (c.active === false) return { valid: false, reason: 'This code is no longer active.' };
+  if (c.validUntil && c.validUntil < today()) return { valid: false, reason: 'This code has expired.' };
+  if (c.maxUses > 0 && (c.uses || 0) >= c.maxUses) return { valid: false, reason: 'This code has been used up.' };
+  const plansRow = await readSetting(db, 'plans');
+  const plans = plansRow ? plansRow.plans : [];
+  const plan = plans.find((p) => p.id === planId);
+  if (!plan) return { valid: false, reason: 'Choose a plan first.' };
+  const price = Number(plan.price) || 0;
+  const discounted = c.type === 'percent'
+    ? Math.round(price * (1 - c.value / 100) * 100) / 100
+    : Math.max(0, Math.round((price - c.value) * 100) / 100);
+  return {
+    valid: true,
+    code: snap.id,
+    price,
+    discounted,
+    label: c.type === 'percent' ? `${c.value}% off` : `${c.value} EUR off`
+  };
+}
+
+async function couponCheck(db, body) {
+  return checkCoupon(db, body.code, body.planId);
+}
+
+async function couponRedeem(db, body) {
+  const result = await checkCoupon(db, body.code, body.planId);
+  if (!result.valid) throw new HttpError(409, result.reason);
+  await db.collection('coupons').doc(result.code).update({ uses: admin.firestore.FieldValue.increment(1) });
+  return { ok: true, discounted: result.discounted };
+}
+
+// ---------------------------------------------------------------------------
+// Customers overview: coaches, their clients, gyms and plans
+// ---------------------------------------------------------------------------
+async function customers(db) {
+  const [userList, clients, profiles, subs] = await Promise.all([
+    readAll(db, 'users'), readAll(db, 'clients'), readAll(db, 'profiles'), readAll(db, 'subscriptions')
+  ]);
+  const profileById = Object.fromEntries(profiles.map((p) => [p.id, p]));
+  const planOf = Object.fromEntries(subs.map((s) => [s.id, s]));
+  const coaches = userList.filter((u) => u.role === 'coach');
+  const gymCounts = {};
+  const coachRows = coaches.map((c) => {
+    const mine = clients.filter((k) => k.coachId === c.id);
+    const gyms = {};
+    mine.forEach((k) => {
+      const gym = k.userId && profileById[k.userId] && profileById[k.userId].gym;
+      if (gym) {
+        gyms[gym] = (gyms[gym] || 0) + 1;
+        gymCounts[gym] = (gymCounts[gym] || 0) + 1;
+      }
+    });
+    const sub = planOf[c.id];
+    return {
+      uid: c.id,
+      name: c.displayName || '',
+      email: c.email || '',
+      status: c.status || 'active',
+      plan: sub ? `${sub.planName} (${sub.status})` : 'No plan',
+      price: sub ? Number(sub.price) || 0 : 0,
+      clients: mine.length,
+      joined: mine.filter((k) => k.userId).length,
+      gyms: Object.entries(gyms).map(([name, count]) => ({ name, count }))
+    };
+  }).sort((a, b) => b.clients - a.clients);
+
+  const nameOfCoach = Object.fromEntries(coaches.map((c) => [c.id, c.displayName || c.email || '']));
+  return {
+    totals: {
+      coaches: coaches.length,
+      clients: clients.length,
+      joinedClients: clients.filter((k) => k.userId).length,
+      payingCoaches: subs.filter((s) => s.status === 'active' && Number(s.price) > 0).length,
+      gyms: Object.keys(gymCounts).length
+    },
+    coaches: coachRows,
+    clients: clients.map((k) => ({
+      id: k.id,
+      name: k.name || '',
+      coachName: nameOfCoach[k.coachId] || '',
+      joined: !!k.userId,
+      gym: (k.userId && profileById[k.userId] && profileById[k.userId].gym) || '',
+      status: k.programmeStatus === 'completed' ? 'completed' : (k.userId ? 'active' : 'pending')
+    })).sort((a, b) => a.coachName.localeCompare(b.coachName)),
+    gyms: Object.entries(gymCounts).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
+    companies: []
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Visits (anonymous daily totals only, no personal data)
+// ---------------------------------------------------------------------------
+async function visitsStats(db) {
+  const snap = await db.collection('visitStats').orderBy(admin.firestore.FieldPath.documentId(), 'desc').limit(60).get();
+  const days = snap.docs.map((d) => ({ date: d.id, count: d.data().count || 0 }));
+  const sum = (n) => days.slice(0, n).reduce((t, d) => t + d.count, 0);
+  return { days: days.slice(0, 30).reverse(), today: days.find((d) => d.date === today())?.count || 0, last7: sum(7), last30: sum(30) };
+}
+
+// ---------------------------------------------------------------------------
+// Admins: invite by email, remove, promote and demote registered accounts
+// ---------------------------------------------------------------------------
+async function adminsList(db) {
+  const rows = await readAll(db, 'admins');
+  const fromEnv = adminEmails().map((email) => ({ email, source: 'Set in Vercel (cannot be removed here)' }));
+  return {
+    admins: [
+      ...fromEnv,
+      ...rows.filter((r) => !adminEmails().includes(r.id)).map((r) => ({ email: r.id, source: 'Added by admin' }))
+    ]
+  };
+}
+
+async function adminInvite(db, body, who) {
+  const email = cleanText(body.email, 200).toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'Enter a valid email address.');
+  if (adminEmails().includes(email)) throw new HttpError(409, 'This person is already an admin.');
+  await db.collection('admins').doc(email).set({ email, addedBy: who.email, addedAt: admin.firestore.FieldValue.serverTimestamp() });
+  await audit(db, who, 'admin-add', email, null);
+  return { ok: true };
+}
+
+async function adminRemove(db, body, who) {
+  const email = cleanText(body.email, 200).toLowerCase();
+  if (adminEmails().includes(email)) throw new HttpError(403, 'Admins set in Vercel cannot be removed here.');
+  if (email === who.email) throw new HttpError(403, 'You cannot remove your own admin access.');
+  await db.collection('admins').doc(email).delete();
+  await audit(db, who, 'admin-remove', email, null);
+  return { ok: true };
+}
+
+async function setAdminForUser(db, body, who) {
+  const user = await db.collection('users').doc(String(body.uid || '_')).get();
+  if (!user.exists) throw new HttpError(404, 'User not found.');
+  const email = String(user.data().email || '').toLowerCase();
+  if (!email) throw new HttpError(400, 'This account has no email address.');
+  if (body.admin === true) return adminInvite(db, { email }, who);
+  return adminRemove(db, { email }, who);
+}
+
+// ---------------------------------------------------------------------------
+// Chat between coaches and the admin (one thread per coach)
+// ---------------------------------------------------------------------------
+const nowIso = () => new Date().toISOString();
+
+async function threadFor(db, coachId) {
+  const snap = await db.collection('adminChats').doc(coachId).get();
+  return snap.exists ? snap.data() : { messages: [], unreadAdmin: false, unreadCoach: false };
+}
+
+async function chatGet(db, body, who) {
+  const thread = await threadFor(db, who.uid);
+  if (thread.unreadCoach) await db.collection('adminChats').doc(who.uid).update({ unreadCoach: false });
+  return { messages: thread.messages || [] };
+}
+
+async function chatSend(db, body, who) {
+  const text = cleanText(body.text, 2000);
+  if (!text) throw new HttpError(400, 'Write a message first.');
+  const coach = (await db.collection('users').doc(who.uid).get()).data() || {};
+  const thread = await threadFor(db, who.uid);
+  const messages = [...(thread.messages || []), { from: 'coach', text, at: nowIso() }].slice(-200);
+  await db.collection('adminChats').doc(who.uid).set({
+    coachId: who.uid, coachName: coach.displayName || '', email: coach.email || who.email,
+    messages, unreadAdmin: true, unreadCoach: false, updatedAt: nowIso()
+  }, { merge: true });
+  return { messages };
+}
+
+async function chatList(db) {
+  const rows = await readAll(db, 'adminChats');
+  return {
+    threads: rows
+      .map((t) => ({
+        coachId: t.id, coachName: t.coachName || t.email || t.id, email: t.email || '',
+        last: (t.messages || []).slice(-1)[0] || null, unreadAdmin: !!t.unreadAdmin, updatedAt: t.updatedAt || ''
+      }))
+      .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
+  };
+}
+
+async function chatThread(db, body) {
+  const thread = await threadFor(db, String(body.coachId || '_'));
+  if (thread.unreadAdmin) await db.collection('adminChats').doc(String(body.coachId)).update({ unreadAdmin: false });
+  return { messages: thread.messages || [], coachName: thread.coachName || '' };
+}
+
+async function chatReply(db, body, who) {
+  const coachId = String(body.coachId || '_');
+  const text = cleanText(body.text, 2000);
+  if (!text) throw new HttpError(400, 'Write a reply first.');
+  const thread = await threadFor(db, coachId);
+  const messages = [...(thread.messages || []), { from: 'admin', text, at: nowIso() }].slice(-200);
+  await db.collection('adminChats').doc(coachId).set({ messages, unreadCoach: true, unreadAdmin: false, updatedAt: nowIso() }, { merge: true });
+  await audit(db, who, 'chat-reply', coachId, null);
+  return { messages };
+}
+
+// ---------------------------------------------------------------------------
+// Actions that coaches may use (everything else needs the admin)
+// ---------------------------------------------------------------------------
+const COACH_ACTIONS = new Set(['chatGet', 'chatSend', 'couponCheck', 'couponRedeem']);
+
 const ACTIONS = {
   overview: (db) => overview(db),
   messages: (db) => messages(db),
@@ -341,8 +684,31 @@ const ACTIONS = {
   emailLog: (db) => emailLog(db),
   retryEmail,
   cancelEmail,
-  billing: (db) => billing(db)
+  billing: (db) => billing(db),
+  customers: (db) => customers(db),
+  couponsList: (db) => couponsList(db),
+  couponSave,
+  couponToggle,
+  couponCheck,
+  couponRedeem,
+  plansGet: (db) => plansGet(db),
+  plansSave,
+  partnersGet: (db) => partnersGet(db),
+  partnersSave,
+  siteGet: (db) => siteGet(db),
+  siteSave,
+  visitsStats: (db) => visitsStats(db),
+  adminsList: (db) => adminsList(db),
+  adminInvite,
+  adminRemove,
+  setAdminForUser,
+  chatList: (db) => chatList(db),
+  chatThread,
+  chatReply,
+  chatGet,
+  chatSend
 };
+
 
 module.exports = async (req, res) => {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST' });
@@ -357,8 +723,17 @@ module.exports = async (req, res) => {
     // Anyone signed in may ask "am I an admin?". The answer is just yes or no.
     if (action === 'whoami') return res.status(200).json({ admin: who.isAdmin });
 
-    if (!who.isAdmin) return res.status(403).json({ error: 'Not allowed.' });
     if (!Object.prototype.hasOwnProperty.call(ACTIONS, action)) return res.status(400).json({ error: 'Unknown action.' });
+
+    if (!who.isAdmin) {
+      // Coaches may use only their own chat and coupon checks, and only while their account is active
+      if (!COACH_ACTIONS.has(action)) return res.status(403).json({ error: 'Not allowed.' });
+      const row = await getDb().collection('users').doc(who.uid).get();
+      const u = row.exists ? row.data() : null;
+      if (!u || u.role !== 'coach' || u.status === 'closed' || u.status === 'suspended') {
+        return res.status(403).json({ error: 'Not allowed.' });
+      }
+    }
 
     const result = await ACTIONS[action](getDb(), body, who);
     return res.status(200).json(result);
