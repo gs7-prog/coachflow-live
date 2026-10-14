@@ -466,6 +466,33 @@ const ICONS_EXTRA = {
     </>
   ),
   check: <path d="M5 12l5 5 9-10" />,
+  tag: (
+    <>
+      <path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9-9-9z" />
+      <circle cx="8" cy="8" r="1.5" />
+    </>
+  ),
+  shield: <path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z" />,
+  globe: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18M12 3c2.5 3 2.5 15 0 18M12 3c-2.5 3-2.5 15 0 18" />
+    </>
+  ),
+  palette: (
+    <>
+      <path d="M12 3a9 9 0 0 0 0 18c1.2 0 1.8-.8 1.8-1.7 0-1.2-.9-1.7-.9-2.7 0-1 .8-1.6 1.8-1.6H17a4 4 0 0 0 4-4c0-4.4-4-7-9-7z" />
+      <circle cx="7.5" cy="11" r="1" />
+      <circle cx="10" cy="7.5" r="1" />
+      <circle cx="15" cy="7.5" r="1" />
+    </>
+  ),
+  link: (
+    <>
+      <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" />
+      <path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />
+    </>
+  ),
   mobile: (
     <>
       <rect x="6" y="2" width="12" height="20" rx="2.5" />
@@ -1757,10 +1784,18 @@ const checkIsAdmin = async () => {
 
 const ADMIN_NAV = [
   { id: 'overview', label: 'Overview', icon: 'dashboard', action: 'overview' },
+  { id: 'customers', label: 'Customers', icon: 'users', action: 'customers' },
+  { id: 'users', label: 'Accounts', icon: 'shield', action: 'users' },
   { id: 'inbox', label: 'Inbox', icon: 'mail', action: 'messages' },
-  { id: 'users', label: 'Users', icon: 'users', action: 'users' },
-  { id: 'emails', label: 'Email log', icon: 'clock', action: 'emailLog' },
-  { id: 'billing', label: 'Billing', icon: 'card', action: 'billing' }
+  { id: 'chat', label: 'Chat', icon: 'chat', action: 'chatList' },
+  { id: 'coupons', label: 'Coupons', icon: 'tag', action: 'couponsList' },
+  { id: 'pricing', label: 'Pricing', icon: 'card', action: 'plansGet' },
+  { id: 'partners', label: 'Partners', icon: 'link', action: 'partnersGet' },
+  { id: 'visits', label: 'Visits', icon: 'globe', action: 'visitsStats' },
+  { id: 'site', label: 'Site and seasons', icon: 'palette', action: 'siteGet' },
+  { id: 'admins', label: 'Admins', icon: 'shield', action: 'adminsList' },
+  { id: 'billing', label: 'Billing', icon: 'card', action: 'billing' },
+  { id: 'emails', label: 'Email log', icon: 'clock', action: 'emailLog' }
 ];
 
 const MAIL_KIND_LABEL = {
@@ -1773,7 +1808,7 @@ const MAIL_KIND_LABEL = {
 
 const adminDate = (value) => (value ? formatDate(new Date(value)) : '-');
 
-function AdminPanel({ user, theme, onToggleTheme, onSignOut }) {
+function AdminPanel({ user, theme, onToggleTheme, onSignOut, embedded = false }) {
   const [page, setPage] = useState('overview');
   const [collapsed, setCollapsed] = useState(() => window.innerWidth < 768);
   const [cache, setCache] = useState({});
@@ -1791,7 +1826,7 @@ function AdminPanel({ user, theme, onToggleTheme, onSignOut }) {
     setError('');
     try {
       const data = await adminCall(entry.action);
-      setCache((prev) => ({ ...prev, [target]: data }));
+      setCache((prev) => ({ ...prev, [target]: { ...data, fetchedAt: Date.now() } }));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -1840,8 +1875,8 @@ function AdminPanel({ user, theme, onToggleTheme, onSignOut }) {
   const shownMail = mailList.filter((m) => mailFilter === 'all' || m.status === mailFilter);
 
   return (
-    <div className={`dashboard-container ${collapsed ? 'collapsed' : ''}`}>
-      <aside className="sidebar">
+    <div className={embedded ? 'admin-embed' : `dashboard-container ${collapsed ? 'collapsed' : ''}`}>
+      {!embedded && <aside className="sidebar">
         <div className="sidebar-header">
           {!collapsed && <h1><BrandMark size={30} /></h1>}
           <button
@@ -1882,10 +1917,10 @@ function AdminPanel({ user, theme, onToggleTheme, onSignOut }) {
             <span className="nav-label">Log out</span>
           </button>
         </div>
-      </aside>
+      </aside>}
 
-      <div className="workspace">
-        <header className="topbar">
+      <div className={embedded ? 'admin-embed-body' : 'workspace'}>
+        {!embedded && <header className="topbar">
           <div className="topbar-left" />
           <nav className="topnav" aria-label="Admin">
             {ADMIN_NAV.map((item) => (
@@ -1912,9 +1947,19 @@ function AdminPanel({ user, theme, onToggleTheme, onSignOut }) {
               <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={18} />
             </button>
           </div>
-        </header>
+        </header>}
 
-        <main className="main-content">
+        {embedded && (
+          <nav className="admin-tabs" aria-label="Admin sections">
+            {ADMIN_NAV.map((item) => (
+              <button key={item.id} className={`admin-tab ${page === item.id ? 'active' : ''}`} onClick={() => setPage(item.id)}>
+                <Icon name={item.icon} size={16} />
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </nav>
+        )}
+        <main className={embedded ? 'admin-embed-main' : 'main-content'}>
           {notice && <p className={`form-message ${notice.type}`}>{notice.text}</p>}
           {error && <p className="form-message error">{error}</p>}
           {loading && !data && <p className="empty-state">Loading...</p>}
@@ -2074,6 +2119,21 @@ function AdminPanel({ user, theme, onToggleTheme, onSignOut }) {
                             <td><span className={`status-pill ${u.status}`}>{u.status}</span></td>
                             <td>
                               <div className="row-actions">
+                                {u.role !== 'admin' && (
+                                  <button
+                                    className="btn-secondary btn-small"
+                                    disabled={loading}
+                                    onClick={() =>
+                                      act(
+                                        'setAdminForUser',
+                                        { uid: u.uid, admin: !u.isAdmin },
+                                        u.isAdmin ? 'Admin rights removed.' : `${u.displayName || u.email} is now an admin.`
+                                      )
+                                    }
+                                  >
+                                    {u.isAdmin ? 'Remove admin' : 'Make admin'}
+                                  </button>
+                                )}
                                 {u.status === 'active' && u.role === 'coach' && (
                                   <button className="btn-secondary btn-small" disabled={loading} onClick={() => changeStatus(u, 'suspended', 'Suspend')}>
                                     Suspend
@@ -2189,6 +2249,14 @@ function AdminPanel({ user, theme, onToggleTheme, onSignOut }) {
             </div>
           )}
 
+          {page === 'customers' && data && <CustomersPage data={data} />}
+          {page === 'coupons' && data && <CouponsPage data={data} act={act} loading={loading} />}
+          {page === 'pricing' && data && <PricingPage key={data.fetchedAt} data={data} act={act} loading={loading} />}
+          {page === 'partners' && data && <PartnersPage key={data.fetchedAt} data={data} act={act} loading={loading} />}
+          {page === 'visits' && data && <VisitsPage data={data} />}
+          {page === 'site' && data && <SitePage key={data.fetchedAt} data={data} act={act} loading={loading} />}
+          {page === 'admins' && data && <AdminsPage data={data} act={act} loading={loading} />}
+          {page === 'chat' && data && <ChatAdminPage key={data.fetchedAt} data={data} loading={loading} />}
           {page === 'billing' && data && (
             <div className="dashboard-view">
               <div className="page-header">
@@ -2344,7 +2412,7 @@ const LANDING_FEATURES = [
   { icon: 'trophy', title: 'Programme tracking', text: 'Mark programmes as completed, see inactive clients, and reopen them whenever you need.' }
 ];
 
-function LandingPage({ language, onLanguage, onLogin, onRegister }) {
+function LandingPage({ language, onLanguage, onLogin, onRegister, plans }) {
   const scrollTo = (id) => (e) => {
     e.preventDefault();
     const el = document.getElementById(id);
@@ -2463,7 +2531,7 @@ function LandingPage({ language, onLanguage, onLogin, onRegister }) {
           <p>Prices in euros, billed monthly. Change or cancel your plan at any time.</p>
         </div>
         <div className="pricing-grid">
-          {PLANS.map((plan) => (
+          {(plans || PLANS).map((plan) => (
             <article key={plan.id} className={`pricing-card ${plan.price > 0 ? 'featured' : ''}`}>
               {plan.price > 0 && <span className="pricing-badge">Most popular</span>}
               <h3>{plan.name}</h3>
@@ -3754,6 +3822,681 @@ function InstallPromptHost() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Admin tools, shown inside the coach dashboard for admins (round 7)
+// Every change goes through /api/admin, which checks the admin on the server.
+// ---------------------------------------------------------------------------
+const ADMIN_CONTACT = 'gregorsedrik@gmail.com';
+
+
+// Christmas hat, snowflake and tree, drawn as icons so they look the same on every device
+const FESTIVE_ICONS = {
+  hat: (
+    <>
+      <path d="M4 17c2-1 4-1.5 8-1.5S18 16 20 17" />
+      <path d="M6 15.5c0-5 2.5-9 7-10.5 1 2.5 1 5 0 8" />
+      <circle cx="13" cy="4.5" r="1.8" />
+      <path d="M5 17.5h14" />
+    </>
+  ),
+  snowflake: (
+    <>
+      <path d="M12 2v20M3.3 7l17.4 10M3.3 17l17.4-10" />
+      <path d="M9 4l3 2 3-2M9 20l3-2 3 2" />
+    </>
+  ),
+  tree: (
+    <>
+      <path d="M12 2l5 7h-2.5L18 14h-3l3.5 6h-13L12 14H9l3.5-5H10z" />
+      <path d="M12 20v2" />
+    </>
+  )
+};
+
+function FestiveIcon({ name, size = 18 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="festive-icon">
+      {FESTIVE_ICONS[name]}
+    </svg>
+  );
+}
+
+const SNOW = Array.from({ length: 34 }, (_, i) => ({
+  left: `${(i * 37) % 100}%`,
+  size: 9 + ((i * 7) % 10),
+  duration: `${26 + ((i * 11) % 16)}s`,
+  delay: `${-((i * 5) % 28)}s`
+}));
+
+// Snow falls slowly over every page at Christmas. Summer adds a warm glow.
+function FestiveLayer() {
+  const [season, setSeason] = useState('default');
+
+  useEffect(() => {
+    let alive = true;
+    const pull = async () => {
+      try {
+        const res = await fetch('/api/public-config');
+        const data = await res.json();
+        if (alive && data.season) setSeason(data.season);
+      } catch (err) {
+        // Keep the default look if the settings cannot be reached
+      }
+    };
+    pull();
+    const timer = setInterval(pull, 5 * 60 * 1000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-season', season);
+  }, [season]);
+
+  if (season === 'christmas') {
+    return (
+      <div className="snow-layer" aria-hidden="true">
+        {SNOW.map((f, i) => (
+          <span key={i} className="snowflake" style={{ left: f.left, animationDuration: f.duration, animationDelay: f.delay }}>
+            <FestiveIcon name="snowflake" size={f.size} />
+          </span>
+        ))}
+      </div>
+    );
+  }
+  if (season === 'summer') return <div className="summer-glow" aria-hidden="true" />;
+  return null;
+}
+
+// Small festive icons near the dashboard heading, shown only at Christmas
+function FestiveBadge({ season }) {
+  if (season !== 'christmas') return null;
+  return (
+    <span className="festive-badge" aria-label="Season greeting">
+      <FestiveIcon name="hat" size={20} />
+      <FestiveIcon name="snowflake" size={18} />
+      <FestiveIcon name="tree" size={20} />
+    </span>
+  );
+}
+
+function MaintenancePage({ message, onAdminSignIn }) {
+  return (
+    <div className="confirm-page">
+      <div className="confirm-card">
+        <div className="gradient-bar" />
+        <div className="confirm-body">
+          <BrandMark size={34} />
+          <span className="confirm-ok maint"><Icon name="shield" size={26} /></span>
+          <h1>BodUp is undergoing maintenance</h1>
+          <p>{message || 'We are making improvements. Please try again shortly.'}</p>
+          <p className="field-hint">Your data is safe. Thank you for your patience.</p>
+          <button className="btn-secondary" onClick={onAdminSignIn}>Admin sign in</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Coach chat with the admin (replaces the coming-soon page)
+// ---------------------------------------------------------------------------
+function CoachChat() {
+  const [messages, setMessages] = useState([]);
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const endRef = useRef(null);
+
+  const load = async () => {
+    try {
+      const data = await adminCall('chatGet');
+      setMessages(data.messages || []);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  useEffect(() => {
+    load();
+    const timer = setInterval(load, 20000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (endRef.current) endRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [messages.length]);
+
+  const send = async (e) => {
+    e.preventDefault();
+    const value = text.trim();
+    if (!value) return;
+    setBusy(true);
+    setError('');
+    try {
+      const data = await adminCall('chatSend', { text: value });
+      setMessages(data.messages || []);
+      setText('');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="dashboard-view">
+      <div className="page-header">
+        <h2>Chat with BodUp</h2>
+        <p>Ask a question or report a problem. The BodUp admin replies here. You can also write by email.</p>
+      </div>
+      <section className="section chat-thread-card">
+        <div className="thread">
+          {messages.length === 0 && <p className="empty-state">No messages yet. Write below to start the conversation.</p>}
+          {messages.map((m, i) => (
+            <div key={i} className={`thread-msg ${m.from === 'admin' ? 'from-admin' : 'from-me'}`}>
+              <span className="thread-text">{m.text}</span>
+              <small>{m.from === 'admin' ? 'BodUp admin' : 'You'} - {m.at ? new Date(m.at).toLocaleString() : ''}</small>
+            </div>
+          ))}
+          <div ref={endRef} />
+        </div>
+        <form className="thread-form" onSubmit={send}>
+          <input
+            type="text"
+            value={text}
+            maxLength={2000}
+            placeholder="Write a message..."
+            onChange={(e) => setText(e.target.value)}
+            aria-label="Message"
+          />
+          <button type="submit" className="btn-primary" disabled={busy || !text.trim()}>
+            {busy ? 'Sending...' : 'Send'}
+          </button>
+        </form>
+        {error && <p className="form-message error">{error}</p>}
+        <p className="field-hint">
+          Prefer email? Write to <a href={`mailto:${ADMIN_CONTACT}`}>{ADMIN_CONTACT}</a>.
+        </p>
+      </section>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Admin pages
+// ---------------------------------------------------------------------------
+function CustomersPage({ data }) {
+  const t = data.totals;
+  return (
+    <div className="dashboard-view">
+      <div className="page-header">
+        <h2>Customers</h2>
+        <p>Coaches, the clients they bring, the gyms those clients train at, and plans.</p>
+      </div>
+      <div className="stats-grid">
+        <div className="stat-card"><div className="stat-value">{t.coaches}</div><div className="stat-label">Coaches</div></div>
+        <div className="stat-card"><div className="stat-value">{t.clients}</div><div className="stat-label">Clients</div></div>
+        <div className="stat-card"><div className="stat-value">{t.joinedClients}</div><div className="stat-label">Clients who joined</div></div>
+        <div className="stat-card"><div className="stat-value">{t.payingCoaches}</div><div className="stat-label">Paying coaches</div></div>
+        <div className="stat-card"><div className="stat-value">{t.gyms}</div><div className="stat-label">Gyms named by clients</div></div>
+      </div>
+
+      <section className="section">
+        <h3>Coaches and their plans</h3>
+        {data.coaches.length === 0 ? <p className="empty-state">No coaches yet.</p> : (
+          <div className="table-scroll">
+            <table className="data-table admin-table">
+              <thead><tr><th>Coach</th><th>Plan</th><th>Price</th><th>Clients</th><th>Joined</th><th>Gyms</th><th>Status</th></tr></thead>
+              <tbody>
+                {data.coaches.map((c) => (
+                  <tr key={c.uid}>
+                    <td><strong>{c.name || '-'}</strong><div className="cell-sub">{c.email}</div></td>
+                    <td>{c.plan}</td>
+                    <td>{c.price ? formatMoney(c.price) : 'Free'}</td>
+                    <td>{c.clients}</td>
+                    <td>{c.joined}</td>
+                    <td>{c.gyms.length ? c.gyms.map((g) => `${g.name} (${g.count})`).join(', ') : '-'}</td>
+                    <td><span className={`status-pill ${c.status}`}>{c.status}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <div className="two-col">
+        <section className="section">
+          <h3>Gyms</h3>
+          {data.gyms.length === 0 ? <p className="empty-state">No gyms named yet. Clients add theirs in their profile.</p> : (
+            <ul className="analytics-list">
+              {data.gyms.map((g) => (
+                <li key={g.name} className="gym-row"><span>{g.name}</span><strong>{g.count}</strong></li>
+              ))}
+            </ul>
+          )}
+        </section>
+        <section className="section">
+          <h3>Companies</h3>
+          <p className="empty-state">Companies appear here once enterprise accounts are set up.</p>
+        </section>
+      </div>
+
+      <section className="section">
+        <h3>All clients</h3>
+        {data.clients.length === 0 ? <p className="empty-state">No clients yet.</p> : (
+          <div className="table-scroll">
+            <table className="data-table admin-table">
+              <thead><tr><th>Client</th><th>Coach</th><th>Gym</th><th>Status</th></tr></thead>
+              <tbody>
+                {data.clients.map((c) => (
+                  <tr key={c.id}>
+                    <td>{c.name || '-'}</td>
+                    <td>{c.coachName || '-'}</td>
+                    <td>{c.gym || '-'}</td>
+                    <td><span className={`status-pill ${c.status}`}>{c.status}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function CouponsPage({ data, act, loading }) {
+  const blank = { code: '', type: 'percent', value: '', validUntil: '', maxUses: '0' };
+  const [form, setForm] = useState(blank);
+  const save = () =>
+    act('couponSave', {
+      code: form.code,
+      type: form.type,
+      value: Number(form.value),
+      validUntil: form.validUntil || null,
+      maxUses: Number(form.maxUses) || 0,
+      active: true
+    }, 'Coupon saved.').then(() => setForm(blank));
+
+  return (
+    <div className="dashboard-view">
+      <div className="page-header">
+        <h2>Coupons</h2>
+        <p>Discount codes coaches can enter at checkout. Each code can have an end date and a limit on uses.</p>
+      </div>
+      <section className="section">
+        <h3>Create a coupon</h3>
+        <div className="form-row three">
+          <div className="form-group">
+            <label>Code</label>
+            <input type="text" value={form.code} placeholder="XMAS20" maxLength={20} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })} />
+          </div>
+          <div className="form-group">
+            <label>Discount</label>
+            <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
+              <option value="percent">Percent off</option>
+              <option value="amount">Amount off (EUR)</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label>{form.type === 'percent' ? 'Percent' : 'EUR'}</label>
+            <input type="number" min="0" step="0.01" value={form.value} onChange={(e) => setForm({ ...form, value: e.target.value })} />
+          </div>
+        </div>
+        <div className="form-row">
+          <div className="form-group">
+            <label>Valid until (optional)</label>
+            <input type="date" value={form.validUntil} onChange={(e) => setForm({ ...form, validUntil: e.target.value })} />
+          </div>
+          <div className="form-group">
+            <label>Maximum uses (0 = no limit)</label>
+            <input type="number" min="0" value={form.maxUses} onChange={(e) => setForm({ ...form, maxUses: e.target.value })} />
+          </div>
+        </div>
+        <button className="btn-primary" disabled={loading || !form.code || !form.value} onClick={save}>Save coupon</button>
+      </section>
+
+      <section className="section">
+        <h3>All coupons</h3>
+        {data.coupons.length === 0 ? <p className="empty-state">No coupons yet.</p> : (
+          <div className="table-scroll">
+            <table className="data-table admin-table">
+              <thead><tr><th>Code</th><th>Discount</th><th>Valid until</th><th>Uses</th><th>Status</th><th>Actions</th></tr></thead>
+              <tbody>
+                {data.coupons.map((c) => (
+                  <tr key={c.code}>
+                    <td><strong>{c.code}</strong></td>
+                    <td>{c.type === 'percent' ? `${c.value}% off` : `${c.value} EUR off`}</td>
+                    <td>{c.validUntil || 'No end date'}</td>
+                    <td>{c.uses}{c.maxUses ? ` of ${c.maxUses}` : ''}</td>
+                    <td><span className={`status-pill ${c.active ? 'active' : 'closed'}`}>{c.active ? 'active' : 'off'}</span></td>
+                    <td>
+                      <button className="btn-secondary btn-small" disabled={loading} onClick={() => act('couponToggle', { code: c.code, active: !c.active }, c.active ? 'Coupon switched off.' : 'Coupon switched on.')}>
+                        {c.active ? 'Switch off' : 'Switch on'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function PricingPage({ data, act, loading }) {
+  const source = data.plans && data.plans.length ? data.plans : PLANS;
+  const [draft, setDraft] = useState(() => source.map((p) => ({ ...p, featuresText: (p.features || []).join('\n') })));
+  const update = (i, patch) => setDraft(draft.map((p, j) => (j === i ? { ...p, ...patch } : p)));
+  const save = () =>
+    act(
+      'plansSave',
+      {
+        plans: draft.map(({ featuresText, ...p }) => ({
+          ...p,
+          price: Number(p.price),
+          features: featuresText.split('\n').map((x) => x.trim()).filter(Boolean)
+        }))
+      },
+      'Prices saved. The website and checkout use them now.'
+    );
+
+  return (
+    <div className="dashboard-view">
+      <div className="page-header">
+        <h2>Pricing</h2>
+        <p>Changes show on the landing page and at checkout straight away.</p>
+      </div>
+      {draft.map((p, i) => (
+        <section key={p.id} className="section plan-edit">
+          <h3>{p.name}</h3>
+          <div className="form-row three">
+            <div className="form-group">
+              <label>Plan name</label>
+              <input type="text" value={p.name} onChange={(e) => update(i, { name: e.target.value })} />
+            </div>
+            <div className="form-group">
+              <label>Price (EUR per month)</label>
+              <input type="number" min="0" step="0.01" value={p.price} onChange={(e) => update(i, { price: e.target.value })} />
+            </div>
+            <div className="form-group">
+              <label>Shown to visitors</label>
+              <label className="check-row"><input type="checkbox" checked={p.active !== false} onChange={(e) => update(i, { active: e.target.checked })} /><span>Show this plan</span></label>
+            </div>
+          </div>
+          <div className="form-group">
+            <label>One line under the name</label>
+            <input type="text" value={p.tagline || ''} maxLength={120} onChange={(e) => update(i, { tagline: e.target.value })} />
+          </div>
+          <div className="form-group">
+            <label>Features (one per line)</label>
+            <textarea rows="5" value={p.featuresText} onChange={(e) => update(i, { featuresText: e.target.value })} />
+          </div>
+        </section>
+      ))}
+      <button className="btn-primary" disabled={loading} onClick={save}>Save all prices</button>
+    </div>
+  );
+}
+
+function PartnersPage({ data, act, loading }) {
+  const source = data.partners && data.partners.length ? data.partners : PARTNERS;
+  const [list, setList] = useState(() => source.map((p) => ({ ...p })));
+  const [adding, setAdding] = useState({ name: '', url: '', description: '' });
+  const save = () => act('partnersSave', { partners: list }, 'Partners saved.');
+  const add = () => {
+    if (!adding.name.trim() || !adding.url.trim()) return;
+    setList([...list, { ...adding, active: true }]);
+    setAdding({ name: '', url: '', description: '' });
+  };
+
+  return (
+    <div className="dashboard-view">
+      <div className="page-header">
+        <h2>Partners</h2>
+        <p>Partners you collaborate with. Coaches can introduce them to clients, and they appear on the Automated messages list.</p>
+      </div>
+      <section className="section">
+        <h3>Add a partner</h3>
+        <div className="form-row three">
+          <div className="form-group">
+            <label>Name</label>
+            <input type="text" value={adding.name} maxLength={60} onChange={(e) => setAdding({ ...adding, name: e.target.value })} />
+          </div>
+          <div className="form-group">
+            <label>Website (https)</label>
+            <input type="url" value={adding.url} placeholder="https://" onChange={(e) => setAdding({ ...adding, url: e.target.value })} />
+          </div>
+          <div className="form-group">
+            <label>Short description</label>
+            <input type="text" value={adding.description} maxLength={200} onChange={(e) => setAdding({ ...adding, description: e.target.value })} />
+          </div>
+        </div>
+        <button className="btn-secondary" onClick={add} disabled={!adding.name.trim() || !adding.url.trim()}>Add to list</button>
+      </section>
+
+      <section className="section">
+        <h3>Current partners</h3>
+        {list.length === 0 ? <p className="empty-state">No partners yet.</p> : (
+          <ul className="partner-list">
+            {list.map((p, i) => (
+              <li key={`${p.id}-${i}`} className="partner-row">
+                <div className="partner-main">
+                  <strong>{p.name}</strong>
+                  <small>{p.url}</small>
+                  {p.description && <small>{p.description}</small>}
+                </div>
+                <label className="check-row"><input type="checkbox" checked={p.active !== false} onChange={(e) => setList(list.map((x, j) => (j === i ? { ...x, active: e.target.checked } : x)))} /><span>Active</span></label>
+                <button className="btn-secondary btn-small" onClick={() => setList(list.filter((_, j) => j !== i))}>Remove</button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <button className="btn-primary" disabled={loading} onClick={save}>Save partners</button>
+      </section>
+    </div>
+  );
+}
+
+function VisitsPage({ data }) {
+  const max = Math.max(1, ...data.days.map((d) => d.count));
+  return (
+    <div className="dashboard-view">
+      <div className="page-header">
+        <h2>Visits</h2>
+        <p>How many times the site was opened each day. Only totals are kept, nothing identifies a visitor.</p>
+      </div>
+      <div className="stats-grid">
+        <div className="stat-card"><div className="stat-value">{data.today}</div><div className="stat-label">Today</div></div>
+        <div className="stat-card"><div className="stat-value">{data.last7}</div><div className="stat-label">Last 7 days</div></div>
+        <div className="stat-card"><div className="stat-value">{data.last30}</div><div className="stat-label">Last 30 days</div></div>
+      </div>
+      <section className="section">
+        <h3>Last 30 days</h3>
+        {data.days.length === 0 ? <p className="empty-state">No visits recorded yet.</p> : (
+          <div className="bar-chart" role="img" aria-label="Visits per day">
+            {data.days.map((d) => (
+              <div key={d.date} className="bar-col" title={`${d.date}: ${d.count}`}>
+                <span className="bar" style={{ height: `${Math.max(3, (d.count / max) * 100)}%` }} />
+                <small>{d.date.slice(8)}</small>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function SitePage({ data, act, loading }) {
+  const [season, setSeason] = useState(data.season || 'default');
+  const [maint, setMaint] = useState({ enabled: !!data.maintenance?.enabled, message: data.maintenance?.message || '' });
+  const seasons = [
+    { id: 'default', label: 'Standard', icon: null },
+    { id: 'christmas', label: 'Christmas', icon: 'hat' },
+    { id: 'summer', label: 'Summer', icon: 'sun' }
+  ];
+  const save = () => act('siteSave', { season, maintenance: maint }, 'Site settings saved.');
+
+  return (
+    <div className="dashboard-view">
+      <div className="page-header">
+        <h2>Site and seasons</h2>
+        <p>Choose the look for everyone, and switch the site into maintenance mode when needed.</p>
+      </div>
+
+      <section className="section">
+        <h3>Season</h3>
+        <p className="section-subtitle">Christmas adds falling snow and festive icons. Summer adds a warm glow. Visitors see the change on their next visit.</p>
+        <div className="season-buttons">
+          {seasons.map((s) => (
+            <button key={s.id} className={`season-btn ${season === s.id ? 'active' : ''} ${s.id}`} aria-pressed={season === s.id} onClick={() => setSeason(s.id)}>
+              {s.icon === 'hat' && <FestiveIcon name="hat" size={20} />}
+              {s.icon === 'sun' && <Icon name="sun" size={20} />}
+              <span>{s.label}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="section">
+        <h3>Maintenance mode</h3>
+        <p className="section-subtitle">When on, nobody can sign in, anyone signed in is signed out, and visitors see your message. Admins can still sign in.</p>
+        <label className="check-row">
+          <input type="checkbox" checked={maint.enabled} onChange={(e) => setMaint({ ...maint, enabled: e.target.checked })} />
+          <span>Maintenance mode is on</span>
+        </label>
+        <div className="form-group">
+          <label>Message to visitors</label>
+          <textarea rows="3" maxLength={300} value={maint.message} onChange={(e) => setMaint({ ...maint, message: e.target.value })} />
+        </div>
+      </section>
+
+      <button className="btn-primary" disabled={loading} onClick={save}>Save site settings</button>
+    </div>
+  );
+}
+
+function AdminsPage({ data, act, loading }) {
+  const [email, setEmail] = useState('');
+  const invite = () => act('adminInvite', { email: email.trim() }, 'Admin added. They get admin rights when they sign in with that email.').then(() => setEmail(''));
+  return (
+    <div className="dashboard-view">
+      <div className="page-header">
+        <h2>Admins</h2>
+        <p>People with admin rights. They sign in normally, and the admin tools appear for them.</p>
+      </div>
+      <section className="section">
+        <h3>Invite an admin</h3>
+        <div className="admin-toolbar">
+          <input className="admin-search" type="email" placeholder="name@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <button className="btn-primary" disabled={loading || !email.trim()} onClick={invite}>Add admin</button>
+        </div>
+      </section>
+      <section className="section">
+        <h3>Current admins</h3>
+        <ul className="partner-list">
+          {data.admins.map((a) => (
+            <li key={a.email} className="partner-row">
+              <div className="partner-main"><strong>{a.email}</strong><small>{a.source}</small></div>
+              {!a.source.startsWith('Set in Vercel') && (
+                <button className="btn-secondary btn-small" disabled={loading} onClick={() => act('adminRemove', { email: a.email }, 'Admin access removed.')}>Remove</button>
+              )}
+            </li>
+          ))}
+        </ul>
+      </section>
+    </div>
+  );
+}
+
+function ChatAdminPage({ data, loading }) {
+  const [selected, setSelected] = useState(null);
+  const [thread, setThread] = useState([]);
+  const [reply, setReply] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const open = async (coachId) => {
+    setSelected(coachId);
+    setError('');
+    try {
+      const res = await adminCall('chatThread', { coachId });
+      setThread(res.messages || []);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const send = async () => {
+    if (!reply.trim() || !selected) return;
+    setBusy(true);
+    setError('');
+    try {
+      const res = await adminCall('chatReply', { coachId: selected, text: reply.trim() });
+      setThread(res.messages || []);
+      setReply('');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="dashboard-view">
+      <div className="page-header">
+        <h2>Chat</h2>
+        <p>Conversations with coaches. Unread threads are marked.</p>
+      </div>
+      <div className="chat-admin">
+        <section className="section chat-list-col">
+          {data.threads.length === 0 ? <p className="empty-state">No conversations yet.</p> : (
+            <ul className="analytics-list">
+              {data.threads.map((t) => (
+                <li key={t.coachId}>
+                  <button className={`analytics-item ${selected === t.coachId ? 'selected' : ''}`} onClick={() => open(t.coachId)}>
+                    <span className="analytics-item-text">
+                      <span className="activity-name">{t.coachName}{t.unreadAdmin && <span className="unread-dot" />}</span>
+                      <span className="activity-sub">{t.last ? t.last.text.slice(0, 60) : ''}</span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+        <section className="section chat-thread-col">
+          {!selected ? <p className="empty-state">Choose a conversation on the left.</p> : (
+            <>
+              <div className="thread">
+                {thread.map((m, i) => (
+                  <div key={i} className={`thread-msg ${m.from === 'admin' ? 'from-admin' : 'from-me'}`}>
+                    <span className="thread-text">{m.text}</span>
+                    <small>{m.from === 'admin' ? 'You (admin)' : 'Coach'} - {m.at ? new Date(m.at).toLocaleString() : ''}</small>
+                  </div>
+                ))}
+              </div>
+              <div className="thread-form">
+                <input type="text" value={reply} maxLength={2000} placeholder="Write a reply..." onChange={(e) => setReply(e.target.value)} />
+                <button className="btn-primary" disabled={busy || !reply.trim() || loading} onClick={send}>{busy ? 'Sending...' : 'Reply'}</button>
+              </div>
+              {error && <p className="form-message error">{error}</p>}
+            </>
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [user, setUser] = useState(null);
   const [userRole, setUserRole] = useState(null);
@@ -3816,18 +4559,29 @@ function App() {
   const [onboardingStep, setOnboardingStep] = useState(2);
   const [onboardingData, setOnboardingData] = useState({});
   const [profilePhotoEditing, setProfilePhotoEditing] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [siteConfig, setSiteConfig] = useState({ season: 'default', maintenance: { enabled: false, message: '' } });
+  const [livePlans, setLivePlans] = useState(PLANS);
+  const [livePartners, setLivePartners] = useState(PARTNERS);
+  const [maintenanceBypass, setMaintenanceBypass] = useState(false);
+  const [couponInput, setCouponInput] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState(null);
+  const [couponMsg, setCouponMsg] = useState(null);
   const [inviteCodeInput, setInviteCodeInput] = useState('');
   const [inviteCodeError, setInviteCodeError] = useState('');
 
   const loadUserData = async (userId) => {
     try {
-      // The server decides who the admin is. The admin account never gets a coach or client profile.
-      if (auth.currentUser && auth.currentUser.uid === userId && (await checkIsAdmin())) {
+      // The server decides who the admin is. An admin with no coach record gets the admin-only view.
+      // An admin who is also a coach keeps the coach dashboard, with the admin tools added.
+      const adminFlag = !!(auth.currentUser && auth.currentUser.uid === userId && (await checkIsAdmin()));
+      setIsAdmin(adminFlag);
+      const userDoc = await getDoc(doc(db, 'users', userId));
+      if (adminFlag && !userDoc.exists()) {
         setLoginNotice('');
         setUserRole('admin');
         return;
       }
-      const userDoc = await getDoc(doc(db, 'users', userId));
       if (userDoc.exists()) {
         if (userDoc.data().status === 'closed') {
           await signOut(auth);
@@ -4011,6 +4765,7 @@ function App() {
       
       if (!userDoc.exists()) {
         if (await checkIsAdmin()) {
+          setIsAdmin(true);
           setUserRole('admin');
           return;
         }
@@ -4077,6 +4832,10 @@ function App() {
       setOnboardingStep(2);
       setOnboardingData({});
       setProfilePhotoEditing(false);
+      setIsAdmin(false);
+      setAppliedCoupon(null);
+      setCouponInput('');
+      setCouponMsg(null);
     } catch (error) {
       console.error('Sign out error:', error);
     }
@@ -4384,6 +5143,58 @@ function App() {
     }
   };
 
+  // Site-wide settings (prices, partners, season, maintenance). Refreshed every minute.
+  useEffect(() => {
+    let alive = true;
+    const pull = async () => {
+      try {
+        const res = await fetch('/api/public-config');
+        const data = await res.json();
+        if (!alive) return;
+        setSiteConfig({ season: data.season || 'default', maintenance: data.maintenance || { enabled: false, message: '' } });
+        if (Array.isArray(data.plans) && data.plans.length) setLivePlans(data.plans);
+        if (Array.isArray(data.partners) && data.partners.length) setLivePartners(data.partners);
+      } catch (err) {
+        // Keep the built-in prices and settings if the server cannot be reached
+      }
+    };
+    pull();
+    const timer = setInterval(pull, 60 * 1000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, []);
+
+  // Count one visit per browser session (totals only)
+  useEffect(() => {
+    try {
+      if (window.sessionStorage.getItem('bodup-visit-counted')) return;
+      window.sessionStorage.setItem('bodup-visit-counted', '1');
+    } catch (err) {
+      // Private browsing: count anyway
+    }
+    fetch('/api/public-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'visit' })
+    }).catch(() => {});
+  }, []);
+
+  // During maintenance, anyone who is not an admin is signed out
+  useEffect(() => {
+    if (siteConfig.maintenance && siteConfig.maintenance.enabled && user && userRole && !isAdmin) {
+      setMaintenanceBypass(false);
+      handleSignOut();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siteConfig.maintenance && siteConfig.maintenance.enabled, user, userRole, isAdmin]);
+
+  // Season colours on the page
+  useEffect(() => {
+    document.documentElement.setAttribute('data-season', siteConfig.season || 'default');
+  }, [siteConfig.season]);
+
   // ---- Billing (demo mode: nothing is charged) ----
   const fetchBilling = async (coachId) => {
     try {
@@ -4408,11 +5219,30 @@ function App() {
     setActiveModal(name);
   };
 
+  const applyCoupon = async () => {
+    setCouponMsg(null);
+    try {
+      const res = await adminCall('couponCheck', { code: couponInput.trim(), planId: checkoutPlanId });
+      if (res.valid) {
+        setAppliedCoupon(res);
+        setCouponMsg({ type: 'success', text: `${res.label} applied.` });
+      } else {
+        setAppliedCoupon(null);
+        setCouponMsg({ type: 'error', text: res.reason || 'This code cannot be used.' });
+      }
+    } catch (err) {
+      setCouponMsg({ type: 'error', text: err.message });
+    }
+  };
+
   const closeModal = () => {
     setActiveModal(null);
     setModalMessage(null);
     setCheckoutPlanId(null);
     setCloseConfirm('');
+    setCouponInput('');
+    setAppliedCoupon(null);
+    setCouponMsg(null);
   };
 
   const openCheckout = (planId) => {
@@ -4510,7 +5340,7 @@ function App() {
   };
 
   const handleSubscribe = async () => {
-    const plan = PLANS.find((p) => p.id === checkoutPlanId);
+    const plan = livePlans.find((p) => p.id === checkoutPlanId);
     const method = billing.methods.find((m) => m.id === selectedMethodId);
     if (!plan || !method) {
       setModalMessage({ type: 'error', text: 'Choose a payment method to continue.' });
@@ -4518,13 +5348,15 @@ function App() {
     }
 
     const methodLabel = `${BRAND_LABEL[method.brand] || 'Card'} ending ${method.last4}`;
+    const amount = appliedCoupon ? appliedCoupon.discounted : plan.price;
     try {
       setBillingBusy(true);
       await setDoc(doc(db, 'subscriptions', user.uid), {
         coachId: user.uid,
         planId: plan.id,
         planName: plan.name,
-        price: plan.price,
+        price: amount,
+        couponCode: appliedCoupon ? appliedCoupon.code : null,
         currency: 'EUR',
         status: 'active',
         methodId: method.id,
@@ -4538,13 +5370,20 @@ function App() {
         invoiceNumber: makeInvoiceNumber(),
         planId: plan.id,
         planName: plan.name,
-        amount: plan.price,
+        amount,
         currency: 'EUR',
         status: 'paid',
         methodLabel,
         mode: 'demo',
         createdAt: serverTimestamp()
       });
+      if (appliedCoupon) {
+        try {
+          await adminCall('couponRedeem', { code: appliedCoupon.code, planId: plan.id });
+        } catch (err) {
+          console.error('Coupon could not be counted:', err);
+        }
+      }
       await fetchBilling(user.uid);
       closeModal();
     } catch (error) {
@@ -4926,7 +5765,7 @@ function App() {
     const coachName = currentCoachName();
     if (kind === 'birthday') return buildBirthdayEmail({ coachName, client: c });
     if (kind === 'christmas') return buildChristmasEmail({ coachName, client: c });
-    const partner = PARTNERS.find((p) => p.id === kind);
+    const partner = livePartners.find((p) => p.id === kind);
     return buildPartnerEmail({ coachName, client: c, partner });
   };
 
@@ -5108,12 +5947,25 @@ function App() {
     }
   };
 
+  if (siteConfig.maintenance && siteConfig.maintenance.enabled && !isAdmin && !maintenanceBypass) {
+    return (
+      <MaintenancePage
+        message={siteConfig.maintenance.message}
+        onAdminSignIn={() => {
+          setAuthView('login');
+          setMaintenanceBypass(true);
+        }}
+      />
+    );
+  }
+
   if (!user) {
     // Visitors see the landing page first. Log in and Register open the sign-in card.
     // A notice (for example "account closed") always opens the card so the message is seen.
     if (authView === 'landing' && !loginNotice) {
       return (
         <LandingPage
+          plans={livePlans}
           language={language}
           onLanguage={setLanguage}
           onLogin={() => setAuthView('login')}
@@ -5394,7 +6246,7 @@ function App() {
     const optInRows = [
       { kind: 'birthday', label: 'Birthday wishes', desc: 'A personal birthday message every year.', icon: 'gift' },
       { kind: 'christmas', label: 'Christmas wishes', desc: 'A Christmas greeting on 24 December every year.', icon: 'star' },
-      ...PARTNERS.map((p) => ({
+      ...livePartners.map((p) => ({
         kind: p.id,
         label: p.name,
         desc: `A one-time introduction to ${p.name} from you.`,
@@ -5455,9 +6307,9 @@ function App() {
 
     const subscription = billing.subscription;
     const currentPlanId = subscription && subscription.status === 'active' ? subscription.planId : null;
-    const subPlan = subscription ? PLANS.find((p) => p.id === subscription.planId) : null;
+    const subPlan = subscription ? livePlans.find((p) => p.id === subscription.planId) : null;
     const subPrice = subPlan ? subPlan.price : subscription ? subscription.price : 0;
-    const checkoutPlan = PLANS.find((p) => p.id === checkoutPlanId);
+    const checkoutPlan = livePlans.find((p) => p.id === checkoutPlanId);
 
     const renderClientCard = (c, note) => (
       <div key={c.id} className="card-wrap">
@@ -5597,6 +6449,16 @@ function App() {
               <Icon name="card" />
               <span className="nav-label">Payments</span>
             </button>
+            {isAdmin && (
+              <button
+                className={`nav-item ${currentPage === 'admin' ? 'active' : ''}`}
+                onClick={() => goTo('admin')}
+                title="Admin"
+              >
+                <Icon name="shield" />
+                <span className="nav-label">Admin</span>
+              </button>
+            )}
           </nav>
 
           <div className="sidebar-section">
@@ -5634,7 +6496,7 @@ function App() {
           <header className="topbar">
             <div className="topbar-left" />
             <nav className="topnav" aria-label="Main">
-              {TOP_NAV.map((item) => (
+              {(isAdmin ? [...TOP_NAV, { id: 'admin', label: 'Admin', icon: 'shield' }] : TOP_NAV).map((item) => (
                 <button
                   key={item.id}
                   className={`topnav-item ${activeTop === item.id ? 'active' : ''}`}
@@ -5670,6 +6532,7 @@ function App() {
                 <div className="page-header">
                   <h2>Dashboard</h2>
                   <p>Welcome, {coachName}</p>
+                  <FestiveBadge season={siteConfig.season} />
                 </div>
 
                 <div className="stats-grid">
@@ -6000,19 +6863,16 @@ function App() {
               </div>
             )}
 
-            {currentPage === 'chat' && (
-              <div className="dashboard-view">
-                <div className="page-header">
-                  <h2>Chat</h2>
-                  <p>Message your clients directly from BodUp.</p>
-                </div>
-                <section className="section chat-placeholder">
-                  <Icon name="chat" size={36} />
-                  <h3>Chat is coming soon</h3>
-                  <p>You will be able to message each client here. For now, use the client pages to review their check-ins.</p>
-                  <button className="btn-secondary" onClick={() => goTo('clients')}>Go to client list</button>
-                </section>
-              </div>
+            {currentPage === 'chat' && <CoachChat />}
+
+            {currentPage === 'admin' && isAdmin && (
+              <AdminPanel
+                embedded
+                user={user}
+                theme={theme}
+                onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                onSignOut={handleSignOut}
+              />
             )}
 
             {currentPage === 'payments' && (
@@ -6060,7 +6920,7 @@ function App() {
                 </section>
 
                 <div className="plans-grid">
-                  {PLANS.map((plan) => {
+                  {livePlans.map((plan) => {
                     const isCurrent = currentPlanId === plan.id;
                     return (
                       <section key={plan.id} className={`plan-card ${isCurrent ? 'current' : ''}`}>
@@ -6666,6 +7526,29 @@ function App() {
                 </button>
               </div>
 
+              <div className="coupon-box">
+                <label>Coupon code</label>
+                <div className="coupon-row">
+                  <input
+                    type="text"
+                    value={couponInput}
+                    maxLength={20}
+                    placeholder="Enter a code"
+                    onChange={(e) => {
+                      setCouponInput(e.target.value.toUpperCase());
+                      setAppliedCoupon(null);
+                      setCouponMsg(null);
+                    }}
+                  />
+                  <button type="button" className="btn-secondary" disabled={!couponInput.trim()} onClick={applyCoupon}>Apply</button>
+                </div>
+                {couponMsg && <p className={`form-message ${couponMsg.type}`}>{couponMsg.text}</p>}
+                {appliedCoupon && (
+                  <p className="coupon-total">
+                    Total today: <strong>{formatMoney(appliedCoupon.discounted)}</strong> <span>(was {formatMoney(checkoutPlan.price)})</span>
+                  </p>
+                )}
+              </div>
               <p className="section-subtitle section-subtitle-tight">
                 Demo mode: this records your plan and an invoice but does not charge your card.
               </p>
@@ -6678,7 +7561,7 @@ function App() {
                   disabled={billingBusy || billing.methods.length === 0}
                   onClick={handleSubscribe}
                 >
-                  {billingBusy ? 'Processing...' : `Pay ${formatMoney(checkoutPlan.price)} and subscribe`}
+                  {billingBusy ? 'Processing...' : `Pay ${formatMoney(appliedCoupon ? appliedCoupon.discounted : checkoutPlan.price)} and subscribe`}
                 </button>
               </div>
             </div>
@@ -7770,6 +8653,7 @@ export default function Root() {
   }
   return (
     <>
+      <FestiveLayer />
       <App />
       <InstallPromptHost />
     </>
