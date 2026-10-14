@@ -188,6 +188,50 @@ The app's name on a phone or computer is now just "BodUp". An app that was alrea
 
 ---
 
+### 2.12 Admin tools (inside your coach dashboard)
+
+Admin is not a separate page. You sign in as a coach, and the **Admin** tab appears in the top menu.
+
+**A. Make your account an admin**
+1. In Vercel, add the environment variable `ADMIN_EMAILS` with the value `gregorsedrik@gmail.com` (keep `coachflow316@gmail.com` too, separated by a comma, if you still want it). Redeploy.
+2. Sign in with Google using `gregorsedrik@gmail.com`. You get your coach dashboard with **Admin** added.
+3. More admins can be added on the **Admins** tab. An admin added there gets rights when they sign in with that email.
+
+Admins listed in Vercel cannot be removed from the page, which is a safety net against locking yourself out.
+
+**B. What the Admin tab includes**
+- **Overview, Accounts, Inbox, Email log, Billing** (as before). Accounts now has **Make admin** and **Remove admin**.
+- **Customers:** coaches, their clients, their plans, gyms named by clients, and a companies list (empty until enterprise accounts exist).
+- **Chat:** conversations with coaches. Coaches see a **Chat** page and can also write by email. Replies appear on their page.
+- **Coupons:** create percent or amount codes, with an end date and a use limit. Switch them on or off. Coaches enter a code at checkout.
+- **Pricing:** change plan names, prices, lines and features. The landing page and checkout update straight away.
+- **Partners:** add or remove partners (name, https link, description). Used by the coach's automated messages.
+- **Visits:** page visits per day, plus totals. Only counts are stored, with no personal data.
+- **Site and seasons:** Christmas (falling snow and festive icons), Summer (a warm glow), or Standard. Maintenance mode shows visitors your message, signs everyone else out, and keeps the admin sign-in open.
+
+**C. Database rules for the new collections (required before you rely on admin security)**
+
+Every admin change is written by the server, which ignores these rules. Browsers, however, must not be able to write to these collections. Without this, a coach could add their own email to the admins list from the browser. Your current rules allow every signed-in user to write everything, so add the rules below and **remove any broad rule** (one that covers everything, such as `match /{document=**}`), because Firestore rules combine and a broad rule still allows writes.
+
+```
+match /settings/{id} {
+  allow read: if true;
+  allow write: if false;
+}
+match /admins/{id} { allow read, write: if false; }
+match /coupons/{id} { allow read, write: if false; }
+match /adminChats/{id} { allow read, write: if false; }
+match /visitStats/{id} { allow read, write: if false; }
+match /adminAudit/{id} { allow read, write: if false; }
+```
+
+**D. Limits to know about**
+- Maintenance mode stops the app for everyone except admins. It does not stop someone who reaches the database directly, which needs the broader rules work.
+- Coupon discounts in checkout are demo only, and the amount recorded is what the app sends. Real payments need Stripe, which checks the price on its own side.
+- Force MFA and enterprise (company seats) are not built yet.
+
+---
+
 ## 3. Using the new features
 
 - **Add feedback to calendar**: on any active client's page, on their card, or from the Calendar page. Pick Google Meet or email, check the previews, and add it. You get a reminder email and the client gets their email on the day.
