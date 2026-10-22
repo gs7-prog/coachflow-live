@@ -1794,6 +1794,7 @@ const ADMIN_NAV = [
   { id: 'visits', label: 'Visits', icon: 'globe', action: 'visitsStats' },
   { id: 'site', label: 'Site and seasons', icon: 'palette', action: 'siteGet' },
   { id: 'admins', label: 'Admins', icon: 'shield', action: 'adminsList' },
+  { id: 'reports', label: 'Reports', icon: 'shield', action: 'adminReports' },
   { id: 'billing', label: 'Billing', icon: 'card', action: 'billing' },
   { id: 'emails', label: 'Email log', icon: 'clock', action: 'emailLog' }
 ];
@@ -1807,6 +1808,38 @@ const MAIL_KIND_LABEL = {
 };
 
 const adminDate = (value) => (value ? formatDate(new Date(value)) : '-');
+
+// Admin: messages reported by coaches or clients
+function ReportsPage({ data, act, loading }) {
+  return (
+    <div className="dashboard-view">
+      <div className="page-header">
+        <h2>Reported messages</h2>
+        <p>Messages people have reported in the mailbox. Review them, then close the report.</p>
+      </div>
+      <section className="section">
+        {data.reports.length === 0 ? <p className="empty-state">No reports.</p> : (
+          <ul className="msg-report-list">
+            {data.reports.map((r) => (
+              <li key={r.id} className="msg-report-row">
+                <div className="msg-report-main">
+                  <strong>{r.reason}</strong>
+                  <small>Reported by {r.reporterName || 'someone'} - {msgTime(r.at)} - {r.status}</small>
+                  <p className="msg-report-text">{r.text || '(message text not available)'}</p>
+                </div>
+                {r.status === 'open' ? (
+                  <button className="btn-secondary btn-small" disabled={loading} onClick={() => act('reportResolve', { id: r.id, status: 'closed' }, 'Report closed.')}>Close report</button>
+                ) : (
+                  <button className="btn-secondary btn-small" disabled={loading} onClick={() => act('reportResolve', { id: r.id, status: 'open' }, 'Report reopened.')}>Reopen</button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
+  );
+}
 
 function AdminPanel({ user, theme, onToggleTheme, onSignOut, embedded = false }) {
   const [page, setPage] = useState('overview');
@@ -2257,6 +2290,7 @@ function AdminPanel({ user, theme, onToggleTheme, onSignOut, embedded = false })
           {page === 'site' && data && <SitePage key={data.fetchedAt} data={data} act={act} loading={loading} />}
           {page === 'admins' && data && <AdminsPage data={data} act={act} loading={loading} />}
           {page === 'chat' && data && <ChatAdminPage key={data.fetchedAt} data={data} loading={loading} />}
+          {page === 'reports' && data && <ReportsPage data={data} act={act} loading={loading} />}
           {page === 'billing' && data && (
             <div className="dashboard-view">
               <div className="page-header">
@@ -4609,6 +4643,469 @@ function ChatAdminPage({ data, loading }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// In-platform mailbox (rounds 10 and 11): opens as a panel over the current page
+// ---------------------------------------------------------------------------
+const msgCall = async (action, payload = {}) => {
+  const current = auth.currentUser;
+  if (!current) throw new Error('Please sign in again.');
+  const token = await current.getIdToken();
+  const res = await fetch('/api/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ action, ...payload })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+};
+
+const msgTime = (iso) => (iso ? new Date(iso).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '');
+const changedMsgs = () => window.dispatchEvent(new Event('bodup-messages-changed'));
+
+const MSG_TEMPLATES = [
+  { id: 'builtin-1', title: 'Check-in reminder', text: 'Hi! Friendly reminder to log your check-in before Sunday. Thank you.' },
+  { id: 'builtin-2', title: 'Well done', text: 'Great work this week. Keep going, every logged day counts.' },
+  { id: 'builtin-3', title: 'Session time', text: 'Our feedback session is coming up. Let me know if the time suits you.' }
+];
+
+// Top bar button with the unread count. Refreshes every 30 seconds and after any read or send.
+function MessagesLauncher({ onOpen }) {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    const pull = async () => {
+      try {
+        const data = await msgCall('unread');
+        if (alive) setCount(data.unreadTotal || 0);
+      } catch (err) {
+        // Keep the last known count if the connection drops
+      }
+    };
+    pull();
+    const timer = setInterval(pull, 30 * 1000);
+    window.addEventListener('bodup-messages-changed', pull);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      window.removeEventListener('bodup-messages-changed', pull);
+    };
+  }, []);
+  return (
+    <button type="button" className="btn-icon msg-launch" onClick={onOpen} title="Messages" aria-label={count ? `Messages, ${count} unread` : 'Messages'}>
+      <Icon name="chat" size={18} />
+      {count > 0 && <span className="msg-badge">{count > 9 ? '9+' : count}</span>}
+    </button>
+  );
+}
+
+// Reads a picture file, shrinks it to fit the size limit, and returns a data URL
+function readSmallPicture(file) {
+  return new Promise((resolve, reject) => {
+    if (!file || !file.type.startsWith('image/')) return reject(new Error('Choose a picture (JPG or PNG).'));
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const max = 900;
+      const scale = Math.min(1, max / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      let quality = 0.8;
+      let data = canvas.toDataURL('image/jpeg', quality);
+      while (data.length > 380000 && quality > 0.4) {
+        quality -= 0.1;
+        data = canvas.toDataURL('image/jpeg', quality);
+      }
+      data.length > 380000 ? reject(new Error('That picture is too large even after shrinking. Try a smaller one.')) : resolve(data);
+    };
+    img.onerror = () => reject(new Error('That file could not be read as a picture.'));
+    img.src = url;
+  });
+}
+
+// The panel: conversations, search, archive, pin, mute, block, report, translation, reply drafts, templates, pictures
+function MessagesDrawer({ open, onClose, meUid, isCoach }) {
+  const [view, setView] = useState('list'); // 'list' | 'new'
+  const [showArchived, setShowArchived] = useState(false);
+  const [conversations, setConversations] = useState([]);
+  const [contacts, setContacts] = useState([]);
+  const [active, setActive] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [flags, setFlags] = useState({});
+  const [blocked, setBlocked] = useState(false);
+  const [text, setText] = useState('');
+  const [image, setImage] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState([]);
+  const [lang, setLang] = useState('en');
+  const [translated, setTranslated] = useState({});
+  const [templates, setTemplates] = useState([]);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const endRef = useRef(null);
+
+  const loadInbox = async () => {
+    try {
+      const data = await msgCall('inbox', { archived: showArchived });
+      setConversations(data.conversations || []);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const loadThread = async (uid) => {
+    try {
+      const data = await msgCall('thread', { with: uid });
+      setMessages(data.messages || []);
+      setFlags(data.flags || {});
+      setBlocked(!!data.blocked);
+      await msgCall('markRead', { with: uid });
+      changedMsgs();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const loadTemplates = async () => {
+    try {
+      const data = await msgCall('templatesList');
+      setTemplates(data.templates || []);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const openNew = async () => {
+    setView('new');
+    try {
+      const data = await msgCall('contacts');
+      setContacts(data.contacts || []);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const pick = (uid, name) => {
+    setActive({ uid, name });
+    setView('list');
+    setMessages([]);
+    setTranslated({});
+    setError('');
+  };
+
+  useEffect(() => {
+    if (!open) return undefined;
+    setError('');
+    loadInbox();
+    loadTemplates();
+    const timer = setInterval(loadInbox, 15 * 1000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, showArchived]);
+
+  useEffect(() => {
+    if (!open || !active) return undefined;
+    loadThread(active.uid);
+    const timer = setInterval(() => loadThread(active.uid), 8 * 1000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, active && active.uid]);
+
+  useEffect(() => {
+    if (endRef.current) endRef.current.scrollIntoView({ block: 'end' });
+  }, [messages.length]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  // Search runs on the server, after a short pause while typing
+  useEffect(() => {
+    if (!open || query.trim().length < 2) {
+      setResults([]);
+      return undefined;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const data = await msgCall('search', { q: query.trim() });
+        setResults(data.results || []);
+      } catch (err) {
+        setError(err.message);
+      }
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [open, query]);
+
+  if (!open) return null;
+
+  const setFlag = async (patch) => {
+    if (!active) return;
+    try {
+      await msgCall('setFlag', { with: active.uid, ...patch });
+      setFlags({ ...flags, ...patch });
+      await loadInbox();
+      changedMsgs();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const toggleBlock = async () => {
+    if (!active) return;
+    const next = !blocked;
+    if (next && !window.confirm(`Block ${active.name}? They will not be able to message you until you unblock them.`)) return;
+    try {
+      await msgCall('block', { with: active.uid, blocked: next });
+      setBlocked(next);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const report = async (m) => {
+    const reason = window.prompt('Why are you reporting this message? An admin will review it.');
+    if (!reason) return;
+    try {
+      await msgCall('report', { messageId: m.id, reason });
+      setMessages(messages.map((x) => (x.id === m.id ? { ...x, reported: true } : x)));
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const translate = async (m) => {
+    try {
+      const data = await msgCall('translate', { text: m.text, to: lang });
+      setTranslated({ ...translated, [m.id]: data.text });
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const draft = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const data = await msgCall('draftReply', { with: active.uid });
+      setText(data.text);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveTemplate = async () => {
+    const value = text.trim();
+    if (!value) return;
+    const title = window.prompt('Name this template, for example "Check-in reminder"');
+    if (!title) return;
+    try {
+      await msgCall('templateSave', { title, text: value });
+      await loadTemplates();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const removeTemplate = async (t) => {
+    try {
+      await msgCall('templateDelete', { id: t.id });
+      await loadTemplates();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const send = async () => {
+    if ((!text.trim() && !image) || !active) return;
+    setBusy(true);
+    setError('');
+    try {
+      await msgCall('send', { to: active.uid, text: text.trim(), image });
+      setText('');
+      setImage(null);
+      await loadThread(active.uid);
+      await loadInbox();
+      changedMsgs();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const attach = async (file) => {
+    try {
+      setImage(await readSmallPicture(file));
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const allTemplates = [...MSG_TEMPLATES, ...templates];
+  const listRows = query.trim().length >= 2 ? null : conversations;
+
+  return (
+    <div className="msg-overlay" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <section className={`msg-panel ${active ? 'has-active' : ''}`} role="dialog" aria-label="Messages">
+        <aside className="msg-list-col">
+          <header className="msg-head">
+            <h3>Messages</h3>
+            <div className="msg-head-actions">
+              <button type="button" className="btn-secondary btn-small" onClick={openNew}>New</button>
+              <button type="button" className="btn-icon" onClick={onClose} aria-label="Close messages"><Icon name="x" size={16} /></button>
+            </div>
+          </header>
+          <div className="msg-search">
+            <input type="search" value={query} placeholder="Search messages" onChange={(e) => setQuery(e.target.value)} aria-label="Search messages" />
+          </div>
+
+          {view === 'new' && (
+            <>
+              <p className="msg-hint">Choose someone to message.</p>
+              <ul className="msg-rows">
+                {contacts.length === 0 && <li className="msg-empty">No one to message yet.</li>}
+                {contacts.map((c) => (
+                  <li key={c.uid}>
+                    <button type="button" className="msg-row" onClick={() => pick(c.uid, c.name)}>
+                      <span className="client-avatar">{initialOf(c.name)}</span>
+                      <span className="msg-row-text"><strong>{c.name || 'Unnamed'}</strong><small>{c.role === 'coach' ? 'Coach' : 'Client'}</small></span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <button type="button" className="link-btn msg-back" onClick={() => setView('list')}>Back to messages</button>
+            </>
+          )}
+
+          {view === 'list' && query.trim().length >= 2 && (
+            <ul className="msg-rows">
+              {results.length === 0 && <li className="msg-empty">No messages match.</li>}
+              {results.map((r) => (
+                <li key={r.id}>
+                  <button type="button" className="msg-row" onClick={() => pick(r.withUid, r.withName)}>
+                    <span className="msg-row-text"><strong>{r.withName}</strong><small>{r.text}</small></span>
+                    <span className="msg-row-meta">{msgTime(r.at)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {view === 'list' && listRows && (
+            <>
+              <div className="msg-filter">
+                <button type="button" className={`msg-chip ${!showArchived ? 'active' : ''}`} onClick={() => setShowArchived(false)}>Inbox</button>
+                <button type="button" className={`msg-chip ${showArchived ? 'active' : ''}`} onClick={() => setShowArchived(true)}>Archived</button>
+              </div>
+              <ul className="msg-rows">
+                {listRows.length === 0 && <li className="msg-empty">{showArchived ? 'Nothing archived.' : 'No conversations yet. Choose New to start one.'}</li>}
+                {listRows.map((c) => (
+                  <li key={c.id}>
+                    <button type="button" className={`msg-row ${active && active.uid === c.withUid ? 'selected' : ''}`} onClick={() => pick(c.withUid, c.withName)}>
+                      <span className="client-avatar">{initialOf(c.withName)}</span>
+                      <span className="msg-row-text">
+                        <strong>{c.pinned && <span className="msg-pin">Pinned</span>}{c.withName}{c.unread > 0 && !c.muted && <span className="msg-dot" />}</strong>
+                        <small>{c.lastText}</small>
+                      </span>
+                      <span className="msg-row-meta">{msgTime(c.lastAt)}{c.muted && <span className="msg-muted"> Muted</span>}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </aside>
+
+        <div className="msg-thread-col">
+          {!active ? (
+            <div className="msg-placeholder">Choose a conversation, search, or start a new one.</div>
+          ) : (
+            <>
+              <header className="msg-head">
+                <button type="button" className="btn-icon msg-mobile-back" onClick={() => setActive(null)} aria-label="Back"><Icon name="back" size={16} /></button>
+                <div className="msg-thread-title"><strong>{active.name}</strong>{blocked && <small className="msg-blocked">Blocked</small>}</div>
+                <div className="msg-tools">
+                  <select value={lang} onChange={(e) => setLang(e.target.value)} aria-label="Translate into">
+                    <option value="en">English</option>
+                    <option value="et">Estonian</option>
+                    <option value="ru">Russian</option>
+                  </select>
+                  <button type="button" className="btn-secondary btn-small" onClick={() => setFlag({ pinned: !flags.pinned })}>{flags.pinned ? 'Unpin' : 'Pin'}</button>
+                  <button type="button" className="btn-secondary btn-small" onClick={() => setFlag({ muted: !flags.muted })}>{flags.muted ? 'Unmute' : 'Mute'}</button>
+                  <button type="button" className="btn-secondary btn-small" onClick={() => setFlag({ archived: !flags.archived })}>{flags.archived ? 'Unarchive' : 'Archive'}</button>
+                  <button type="button" className="btn-secondary btn-small" onClick={toggleBlock}>{blocked ? 'Unblock' : 'Block'}</button>
+                </div>
+              </header>
+              <div className="msg-thread">
+                {messages.length === 0 && <p className="msg-empty">No messages yet. Say hello.</p>}
+                {messages.map((m) => (
+                  <div key={m.id} className={`thread-msg ${m.from === meUid ? 'from-me' : 'from-admin'}`}>
+                    {m.image && <img className="msg-image" src={m.image} alt="Shared picture" />}
+                    {m.text && <span className="thread-text">{m.text}</span>}
+                    {translated[m.id] && <span className="msg-translation">{translated[m.id]}</span>}
+                    <small>
+                      {msgTime(m.at)}
+                      {m.text && <button type="button" className="msg-action" onClick={() => translate(m)}>Translate</button>}
+                      {m.from !== meUid && (m.reported ? <span className="msg-action muted">Reported</span> : <button type="button" className="msg-action" onClick={() => report(m)}>Report</button>)}
+                    </small>
+                  </div>
+                ))}
+                <div ref={endRef} />
+              </div>
+
+              <div className="msg-composer">
+                {showTemplates && (
+                  <div className="msg-templates">
+                    {allTemplates.map((t) => (
+                      <div key={t.id} className="msg-template-row">
+                        <button type="button" className="msg-template" onClick={() => { setText(t.text); setShowTemplates(false); }}>
+                          <strong>{t.title}</strong><small>{t.text}</small>
+                        </button>
+                        {!t.id.startsWith('builtin') && <button type="button" className="msg-action" onClick={() => removeTemplate(t)}>Delete</button>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {image && (
+                  <div className="msg-attach-preview">
+                    <img src={image} alt="Picture to send" />
+                    <button type="button" className="msg-action" onClick={() => setImage(null)}>Remove</button>
+                  </div>
+                )}
+                <form className="msg-compose" onSubmit={(e) => { e.preventDefault(); send(); }}>
+                  <div className="msg-compose-tools">
+                    <button type="button" className="msg-action" onClick={() => setShowTemplates(!showTemplates)}>Templates</button>
+                    {isCoach && <button type="button" className="msg-action" onClick={draft} disabled={busy}>Draft reply</button>}
+                    {text.trim() && <button type="button" className="msg-action" onClick={saveTemplate}>Save as template</button>}
+                    <label className="msg-action msg-attach-btn">
+                      Picture
+                      <input type="file" accept="image/*" onChange={(e) => attach(e.target.files && e.target.files[0])} />
+                    </label>
+                  </div>
+                  <textarea rows="2" value={text} maxLength={2000} placeholder={`Message ${active.name}...`} onChange={(e) => setText(e.target.value)} aria-label="Message" />
+                  <button type="submit" className="btn-primary" disabled={busy || (!text.trim() && !image)}>{busy ? 'Sending...' : 'Send'}</button>
+                </form>
+              </div>
+            </>
+          )}
+          {error && <p className="form-message error msg-error">{error}</p>}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function App() {
   const [user, setUser] = useState(null);
   const [userRole, setUserRole] = useState(null);
@@ -4680,6 +5177,7 @@ function App() {
   const [appliedCoupon, setAppliedCoupon] = useState(null);
   const [couponMsg, setCouponMsg] = useState(null);
   const [invoicesOpen, setInvoicesOpen] = useState(false);
+  const [messagesOpen, setMessagesOpen] = useState(false);
   const [inviteCodeInput, setInviteCodeInput] = useState('');
   const [inviteCodeError, setInviteCodeError] = useState('');
 
@@ -6549,7 +7047,7 @@ function App() {
             </button>
             <button
               className={`nav-item ${currentPage === 'chat' ? 'active' : ''}`}
-              onClick={() => goTo('chat')}
+              onClick={() => setMessagesOpen(true)}
               title="Chat"
             >
               <Icon name="chat" />
@@ -6614,7 +7112,7 @@ function App() {
                 <button
                   key={item.id}
                   className={`topnav-item ${activeTop === item.id ? 'active' : ''}`}
-                  onClick={() => goTo(item.id)}
+                  onClick={() => (item.id === 'chat' ? setMessagesOpen(true) : goTo(item.id))}
                 >
                   <Icon name={item.icon} size={18} />
                   <span className="topnav-label">{item.label}</span>
@@ -6631,6 +7129,7 @@ function App() {
               >
                 <Icon name="refresh" size={18} />
               </button>
+              <MessagesLauncher onOpen={() => setMessagesOpen(true)} />
               <LanguageMenu language={language} onChange={setLanguage} />
               <SettingsMenu
                 theme={theme}
@@ -7700,6 +8199,8 @@ function App() {
             </div>
           </Modal>
         )}
+        <MessagesDrawer open={messagesOpen} onClose={() => setMessagesOpen(false)} meUid={user.uid} isCoach={userRole === 'coach'} />
+
         {scheduleDraft && (
           <Modal title="Add feedback to calendar" onClose={() => setScheduleDraft(null)} wide>
             <div className="form">
@@ -8221,7 +8722,7 @@ function App() {
               <button
                 key={item.id}
                 className={`nav-item ${currentPage === item.id ? 'active' : ''}`}
-                onClick={() => goClient(item.id)}
+                onClick={() => (item.id === 'chat' ? setMessagesOpen(true) : goClient(item.id))}
                 title={item.label}
               >
                 <Icon name={item.icon} />
@@ -8246,7 +8747,7 @@ function App() {
                 <button
                   key={item.id}
                   className={`topnav-item ${activeTop === item.id ? 'active' : ''}`}
-                  onClick={() => goClient(item.id)}
+                  onClick={() => (item.id === 'chat' ? setMessagesOpen(true) : goClient(item.id))}
                 >
                   <Icon name={item.icon} size={18} />
                   <span className="topnav-label">{item.label}</span>
@@ -8254,6 +8755,7 @@ function App() {
               ))}
             </nav>
             <div className="topbar-right">
+              <MessagesLauncher onOpen={() => setMessagesOpen(true)} />
               <LanguageMenu language={language} onChange={setLanguage} />
               <SettingsMenu
                 theme={theme}
@@ -8687,6 +9189,8 @@ function App() {
             )}
           </main>
         </div>
+
+        <MessagesDrawer open={messagesOpen} onClose={() => setMessagesOpen(false)} meUid={user.uid} isCoach={userRole === 'coach'} />
 
         {selectedClientEvent && (
           <Modal title="Feedback session" onClose={() => setSelectedEventId(null)}>
