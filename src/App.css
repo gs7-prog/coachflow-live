@@ -6143,3 +6143,48 @@ textarea:focus-visible {
   padding: 11px 16px;
   border-radius: 12px;
 }
+
+/* =========================================================================
+   Round 9: pinned sidebar header and log out, invoice dropdown
+   ========================================================================= */
+.dashboard-container .sidebar-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface);
+  padding-bottom: 12px;
+}
+
+.dashboard-container .sidebar-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  background: var(--surface);
+  padding-bottom: 6px;
+}
+
+.collapse-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 0;
+  background: none;
+  border: none;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+
+.collapse-head h3 {
+  margin-bottom: 0;
+}
+
+.collapse-meta {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--primary);
+  white-space: nowrap;
+}
