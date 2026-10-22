@@ -649,7 +649,6 @@ function SettingsMenu({ theme, onToggleTheme, onOpenModal }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useClickAway(ref, () => setOpen(false));
-  const dark = theme === 'dark';
 
   const choose = (name) => {
     setOpen(false);
@@ -670,23 +669,6 @@ function SettingsMenu({ theme, onToggleTheme, onOpenModal }) {
       </button>
       {open && (
         <div className="menu-popover settings-popover" role="menu">
-          <div className="menu-row">
-            <Icon name={dark ? 'moon' : 'sun'} size={18} />
-            <div className="menu-row-text">
-              <span>Dark mode</span>
-              <small>{dark ? 'Dark theme is on' : 'Light theme is on'}</small>
-            </div>
-            <button
-              className={`switch ${dark ? 'on' : ''}`}
-              role="switch"
-              aria-checked={dark}
-              aria-label="Dark mode"
-              onClick={onToggleTheme}
-            >
-              <span className="switch-knob" />
-            </button>
-          </div>
-          <div className="menu-divider" />
           <button className="menu-item" role="menuitem" onClick={() => choose('profile')}>
             <Icon name="user" size={18} />
             <span>Update profile</span>
@@ -2481,13 +2463,133 @@ function AiSpark() {
   );
 }
 
+// Landing pages: Solutions and Features each open their own page
+const SOLUTION_PAGES = [
+  { id: 'solutions-coaches', label: 'For coaches' },
+  { id: 'solutions-clients', label: 'For clients' },
+  { id: 'solutions-routine', label: 'For a healthy routine' }
+];
+const FEATURE_PAGES = [
+  { id: 'features-coach', label: 'Coach' },
+  { id: 'features-engage', label: 'Engage' },
+  { id: 'features-manage', label: 'Manage' }
+];
+const LANDING_PAGE_CONTENT = {
+  'solutions-coaches': { kicker: 'Solutions', title: 'For coaches', intro: LANDING_SOLUTIONS[0].text, items: LANDING_SOLUTIONS[0].points.map((t) => ({ text: t })) },
+  'solutions-clients': { kicker: 'Solutions', title: 'For clients', intro: LANDING_SOLUTIONS[1].text, items: LANDING_SOLUTIONS[1].points.map((t) => ({ text: t })) },
+  'solutions-routine': { kicker: 'Solutions', title: 'For a healthy routine', intro: LANDING_SOLUTIONS[2].text, items: LANDING_SOLUTIONS[2].points.map((t) => ({ text: t })) },
+  'features-coach': {
+    kicker: 'Features', title: 'Coach',
+    intro: 'Plan training and nutrition, and let AI do the heavy lifting.',
+    items: [
+      { text: 'Workout planning', ai: true, soon: true },
+      { text: 'Meal plans and recipe books', ai: true },
+      { text: 'AI workout builder', ai: true, soon: true },
+      { text: 'Habit tracking', soon: true },
+      { text: 'Academy', soon: true },
+      { text: 'AI powered smart responses', ai: true }
+    ]
+  },
+  'features-engage': {
+    kicker: 'Features', title: 'Engage',
+    intro: 'Stay close to every client between sessions.',
+    items: [
+      { text: 'Direct communication with customers: onsite chat' },
+      { text: 'Scheduled 1-on-1s via calendar' },
+      { text: 'Personalization: birthdays and achievements' }
+    ]
+  },
+  'features-manage': {
+    kicker: 'Features', title: 'Manage',
+    intro: 'Run the business behind the coaching.',
+    items: [
+      { text: 'Data analytics' },
+      { text: 'Integrated payments', soon: true },
+      { text: 'Scheduling' },
+      { text: 'Teams (for corporations)', soon: true }
+    ]
+  }
+};
+
+// A nav item with a dropdown list
+function LandingDropdown({ label, items, onPick }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useClickAway(ref, () => setOpen(false));
+  return (
+    <div className="menu-wrap landing-dd" ref={ref}>
+      <button type="button" className="landing-dd-btn" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
+        {label} <Icon name="chevronDown" size={14} />
+      </button>
+      {open && (
+        <ul className="menu-popover landing-dd-menu" role="menu">
+          {items.map((it) => (
+            <li key={it.id}>
+              <button type="button" className="menu-item" role="menuitem" onClick={() => { setOpen(false); onPick(it.id); }}>{it.label}</button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// One separate page for a Solutions or Features item
+function LandingSubPage({ page, setPage, onRegister, onLogin, language, onLanguage }) {
+  const c = LANDING_PAGE_CONTENT[page];
+  return (
+    <div className="landing">
+      <header className="landing-nav">
+        <button type="button" className="landing-brand landing-brand-btn" onClick={() => setPage('home')} aria-label="BodUp home">
+          <BrandMark size={34} />
+        </button>
+        <nav className="landing-links" aria-label="Page sections">
+          <LandingDropdown label="Solutions" items={SOLUTION_PAGES} onPick={setPage} />
+          <LandingDropdown label="Features" items={FEATURE_PAGES} onPick={setPage} />
+          <button type="button" className="landing-dd-btn" onClick={() => setPage('home')}>Pricing</button>
+        </nav>
+        <div className="landing-actions">
+          <LanguageMenu language={language} onChange={onLanguage} />
+          <button className="btn-secondary landing-login" onClick={onLogin}>Log in</button>
+          <button className="btn-primary landing-register" onClick={onRegister}>Register</button>
+        </div>
+      </header>
+      <main className="landing-subpage">
+        <span className="landing-kicker">{c.kicker}</span>
+        <h1>{c.title}</h1>
+        <p className="landing-lead">{c.intro}</p>
+        <ul className="subpage-list">
+          {c.items.map((it) => (
+            <li key={it.text}>
+              <span className="feature-text">{it.text}</span>
+              <span className="feature-tags">
+                {it.ai && <span className="ai-badge"><AiSpark /> AI</span>}
+                {it.soon && <span className="soon-badge">Coming soon</span>}
+              </span>
+            </li>
+          ))}
+        </ul>
+        <div className="subpage-actions">
+          <button className="btn-primary btn-large" onClick={onRegister}>Register as a coach</button>
+          <button className="btn-secondary btn-large" onClick={() => setPage('home')}>Back to home</button>
+        </div>
+      </main>
+    </div>
+  );
+}
+
 function LandingPage({ language, onLanguage, onLogin, onRegister, plans }) {
   const [billing, setBilling] = useState('monthly');
+  const [page, setPage] = useState('home');
   const scrollTo = (id) => (e) => {
     e.preventDefault();
     const el = document.getElementById(id);
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
+
+  if (page !== 'home') {
+    return <LandingSubPage page={page} setPage={setPage} onRegister={onRegister} onLogin={onLogin} language={language} onLanguage={onLanguage} />;
+  }
 
   return (
     <div className="landing">
@@ -2496,9 +2598,9 @@ function LandingPage({ language, onLanguage, onLogin, onRegister, plans }) {
           <BrandMark size={34} />
         </a>
         <nav className="landing-links" aria-label="Page sections">
-          <a href="#solutions" onClick={scrollTo('solutions')}>Solutions</a>
-          <a href="#features" onClick={scrollTo('features')}>Features</a>
-          <a href="#pricing" onClick={scrollTo('pricing')}>Pricing</a>
+          <LandingDropdown label="Solutions" items={SOLUTION_PAGES} onPick={setPage} />
+          <LandingDropdown label="Features" items={FEATURE_PAGES} onPick={setPage} />
+          <button type="button" className="landing-dd-btn" onClick={() => { setPage('home'); setTimeout(() => scrollTo('pricing')({ preventDefault() {} }), 60); }}>Pricing</button>
         </nav>
         <div className="landing-actions">
           <LanguageMenu language={language} onChange={onLanguage} />
@@ -4733,6 +4835,7 @@ function MessagesDrawer({ open, onClose, meUid, isCoach }) {
   const [conversations, setConversations] = useState([]);
   const [contacts, setContacts] = useState([]);
   const [active, setActive] = useState(null);
+  const [support, setSupport] = useState(null);
   const [messages, setMessages] = useState([]);
   const [flags, setFlags] = useState({});
   const [blocked, setBlocked] = useState(false);
@@ -4752,6 +4855,7 @@ function MessagesDrawer({ open, onClose, meUid, isCoach }) {
     try {
       const data = await msgCall('inbox', { archived: showArchived });
       setConversations(data.conversations || []);
+      setSupport(data.support || null);
     } catch (err) {
       setError(err.message);
     }
@@ -5009,6 +5113,14 @@ function MessagesDrawer({ open, onClose, meUid, isCoach }) {
                 <button type="button" className={`msg-chip ${showArchived ? 'active' : ''}`} onClick={() => setShowArchived(true)}>Archived</button>
               </div>
               <ul className="msg-rows">
+                {!showArchived && support && support.uid !== meUid && (
+                  <li>
+                    <button type="button" className={`msg-row msg-support ${active && active.uid === support.uid ? 'selected' : ''}`} onClick={() => pick(support.uid, 'BodUp admin')}>
+                      <span className="client-avatar">B</span>
+                      <span className="msg-row-text"><strong>Contact BodUp admin</strong><small>Questions, problems or feedback about the platform</small></span>
+                    </button>
+                  </li>
+                )}
                 {listRows.length === 0 && <li className="msg-empty">{showArchived ? 'Nothing archived.' : 'No conversations yet. Choose New to start one.'}</li>}
                 {listRows.map((c) => (
                   <li key={c.id}>
@@ -5124,7 +5236,6 @@ function App() {
   const [returnPage, setReturnPage] = useState('dashboard');
   const [inviteCode, setInviteCode] = useState('');
   const [copied, setCopied] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
   const [expandedCheckIn, setExpandedCheckIn] = useState(null);
   const [theme, setTheme] = useState(() => readPref('coachflow-theme', 'light'));
   const [language, setLanguage] = useState(() => readPref('coachflow-language', 'en'));
@@ -5316,13 +5427,6 @@ function App() {
     setCurrentPage('client-detail');
   };
 
-  const handleRefresh = async () => {
-    if (!user) return;
-    setRefreshing(true);
-    await fetchCoachData(user.uid);
-    await fetchCalendar(user.uid);
-    setRefreshing(false);
-  };
 
   const handleCopyInvite = async () => {
     if (!inviteCode) return;
@@ -7121,13 +7225,12 @@ function App() {
             </nav>
             <div className="topbar-right">
               <button
-                className="btn-icon"
-                onClick={handleRefresh}
-                disabled={refreshing}
-                title="Reload client data"
-                aria-label="Reload client data"
+                className="btn-icon theme-toggle"
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+                title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
               >
-                <Icon name="refresh" size={18} />
+                <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={18} />
               </button>
               <MessagesLauncher onOpen={() => setMessagesOpen(true)} />
               <LanguageMenu language={language} onChange={setLanguage} />
@@ -7443,7 +7546,7 @@ function App() {
                   </div>
                 </section>
 
-                <section className="section">
+                <section className="section upcoming-block">
                   <h3>Upcoming feedback</h3>
                   {upcomingEvents.length === 0 ? (
                     <p className="empty-state">
@@ -8755,6 +8858,14 @@ function App() {
               ))}
             </nav>
             <div className="topbar-right">
+              <button
+                className="btn-icon theme-toggle"
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+                title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+              >
+                <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={18} />
+              </button>
               <MessagesLauncher onOpen={() => setMessagesOpen(true)} />
               <LanguageMenu language={language} onChange={setLanguage} />
               <SettingsMenu
