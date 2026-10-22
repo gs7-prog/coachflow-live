@@ -5984,3 +5984,162 @@ textarea:focus-visible {
     min-height: 48px;
   }
 }
+
+/* =========================================================================
+   Landing page: feature groups, AI and coming-soon tags, billing toggle, three plans
+   ========================================================================= */
+.feature-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 18px;
+}
+
+.feature-group {
+  background: var(--surface);
+  border-radius: 22px;
+  box-shadow: var(--shadow-sm);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.feature-group h3 {
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.feature-group ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.feature-group li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.feature-tags {
+  display: inline-flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.ai-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #3b82f6, #7c3aed);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.ai-spark {
+  flex-shrink: 0;
+}
+
+.soon-badge {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--pending-bg);
+  color: var(--pending-ink);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.ai-strip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 16px 20px;
+  border-radius: 16px;
+  background: var(--primary-soft);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.ai-strip .ai-spark {
+  color: #7c3aed;
+}
+
+.billing-toggle {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  margin: 0 auto 24px;
+  background: var(--surface);
+  border-radius: 999px;
+  box-shadow: var(--shadow-sm);
+  width: fit-content;
+  display: flex;
+  justify-content: center;
+}
+
+.billing-toggle button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.billing-toggle button.active {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.save-pill {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #166534;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.billing-toggle button.active .save-pill {
+  background: rgba(255, 255, 255, 0.22);
+  color: #ffffff;
+}
+
+.pricing-grid-3 {
+  max-width: 1040px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.pricing-note {
+  font-size: 12px;
+  color: var(--text-faint);
+  margin-top: -6px;
+}
+
+.contact-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  margin-top: auto;
+  padding: 11px 16px;
+  border-radius: 12px;
+}
