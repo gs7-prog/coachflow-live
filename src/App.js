@@ -5051,7 +5051,7 @@ function MessagesDrawer({ open, onClose, meUid, isCoach }) {
                 {messages.length === 0 && <p className="msg-empty">No messages yet. Say hello.</p>}
                 {messages.map((m) => (
                   <div key={m.id} className={`thread-msg ${m.from === meUid ? 'from-me' : 'from-admin'}`}>
-                    {m.image && <img className="msg-image" src={m.image} alt="Shared picture" />}
+                    {m.image && <img className="msg-image" src={m.image} alt="Attachment" />}
                     {m.text && <span className="thread-text">{m.text}</span>}
                     {translated[m.id] && <span className="msg-translation">{translated[m.id]}</span>}
                     <small>
@@ -5079,7 +5079,7 @@ function MessagesDrawer({ open, onClose, meUid, isCoach }) {
                 )}
                 {image && (
                   <div className="msg-attach-preview">
-                    <img src={image} alt="Picture to send" />
+                    <img src={image} alt="Attachment to send" />
                     <button type="button" className="msg-action" onClick={() => setImage(null)}>Remove</button>
                   </div>
                 )}
