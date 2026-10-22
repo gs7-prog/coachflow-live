@@ -87,8 +87,19 @@ const flagsFor = (conv, uid) => ((conv.flags && conv.flags[uid]) || {});
 
 // ---- contacts, inbox and unread ----
 
+// The BodUp admin, shown to everyone as the default "Contact admin" entry
+async function supportContact(db) {
+  for (const email of adminEmailList()) {
+    const snap = await db.collection('users').where('email', '==', email).limit(1).get();
+    if (!snap.empty) return { uid: snap.docs[0].id, name: 'BodUp admin', role: 'admin' };
+  }
+  return null;
+}
+
 async function contacts(db, me) {
   const out = [];
+  const support = me.isAdmin ? null : await supportContact(db);
+  if (support) out.push(support);
   if (me.isAdmin) {
     const users = await db.collection('users').limit(500).get();
     users.docs.forEach((d) => {
@@ -105,7 +116,7 @@ async function contacts(db, me) {
       if (coach) out.push({ uid: coach.uid, name: coach.name, role: 'coach' });
     }
   }
-  return { contacts: out.sort((a, b) => a.name.localeCompare(b.name)) };
+  return { contacts: [...(support ? [support] : []), ...out.filter((c) => !support || c.uid !== support.uid).sort((a, b) => a.name.localeCompare(b.name))] };
 }
 
 async function myConversations(db, me) {
@@ -133,7 +144,8 @@ async function inbox(db, me, body) {
   }).filter((r) => (showArchived ? r.archived : !r.archived));
   rows.sort((a, b) => (b.pinned - a.pinned) || String(b.lastAt || '').localeCompare(String(a.lastAt || '')));
   const unreadTotal = rows.reduce((t, r) => t + (r.muted ? 0 : r.unread), 0);
-  return { conversations: rows, unreadTotal };
+  const support = me.isAdmin ? null : await supportContact(db);
+  return { conversations: rows, unreadTotal, support };
 }
 
 async function unread(db, me) {
