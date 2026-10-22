@@ -5704,3 +5704,67 @@ textarea:focus-visible {
   color: rgba(255, 255, 255, 0.9);
   opacity: 0.7;
 }
+
+/* =========================================================================
+   Sign-in card: one main action, clear labels, secondary Google option
+   ========================================================================= */
+.login-card .login-title {
+  font-size: 26px;
+  font-weight: 800;
+  margin: 10px 0 14px;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: left;
+  margin-top: 6px;
+}
+
+.login-form .form-group {
+  margin-bottom: 0;
+}
+
+.login-form label {
+  display: block;
+  text-align: left;
+}
+
+.login-forgot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.login-submit {
+  width: 100%;
+  padding: 14px;
+  border-radius: 12px;
+  font-size: 15px;
+}
+
+.login-google {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 13px;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.login-google:hover {
+  background: var(--panel);
+}
+
+.login-client {
+  margin-top: 18px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
