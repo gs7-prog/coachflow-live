@@ -6671,3 +6671,100 @@ textarea:focus-visible {
   font-size: 14px;
   margin-top: 4px;
 }
+
+/* =========================================================================
+   Round 12: hidden sidebar scrollbar, aligned upcoming block, landing dropdowns and pages, contact admin
+   ========================================================================= */
+.sidebar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.sidebar::-webkit-scrollbar {
+  display: none;
+  width: 0;
+}
+
+.upcoming-block {
+  max-width: 680px;
+  margin: 0 auto 16px;
+}
+
+.landing-dd {
+  position: relative;
+}
+
+.landing-dd-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 14px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.landing-dd-btn:hover {
+  background: var(--panel);
+  color: var(--primary);
+}
+
+.landing-dd-menu {
+  left: 0;
+  right: auto;
+  min-width: 220px;
+}
+
+.landing-brand-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.landing-subpage {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: clamp(40px, 7vw, 80px) clamp(16px, 4vw, 40px);
+}
+
+.landing-subpage h1 {
+  font-size: clamp(30px, 4.5vw, 44px);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin: 14px 0 12px;
+}
+
+.subpage-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 28px 0 32px;
+}
+
+.subpage-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+  background: var(--surface);
+  border-radius: 16px;
+  box-shadow: var(--shadow-sm);
+  font-size: 15px;
+}
+
+.subpage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.msg-support {
+  background: var(--primary-soft);
+}
