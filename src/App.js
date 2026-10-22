@@ -272,7 +272,7 @@ const PLANS = [
     name: 'Free',
     price: 0,
     tagline: 'Everything you need to get started',
-    features: ['Up to 10 clients', 'Client profiles and weekly check-ins', 'Activity analytics']
+    features: ['Up to 5 clients', 'Client profiles and weekly check-ins', 'Activity analytics']
   },
   {
     id: 'pro',
@@ -2403,16 +2403,52 @@ const LANDING_SOLUTIONS = [
   }
 ];
 
-const LANDING_FEATURES = [
-  { icon: 'dashboard', title: 'Client activity at a glance', text: 'Green, yellow and red groups show who is on track and who needs a message today.' },
-  { icon: 'check', title: 'Weekly check-ins', text: 'Clients log weight, meals and water for one day or the whole week, and see their progress.' },
-  { icon: 'calendar', title: 'Calendar and sessions', text: 'Schedule a Google Meet 1-on-1 or an email feedback. Reminders go to your inbox ahead of time.' },
-  { icon: 'mail', title: 'Automated messages', text: 'Preview every email before it goes out. Birthday and Christmas messages are switched on per client with consent.' },
-  { icon: 'book', title: 'Learning library', text: 'A shopping list, a batch-cooking guide, a myth buster and a healthier substitution chart.' },
-  { icon: 'trophy', title: 'Programme tracking', text: 'Mark programmes as completed, see inactive clients, and reopen them whenever you need.' }
+// Landing page feature groups. "ai" marks AI-powered items. "soon" marks items not built yet.
+const LANDING_FEATURE_GROUPS = [
+  {
+    title: 'Coach',
+    icon: 'dashboard',
+    items: [
+      { text: 'Workout planning', ai: true, soon: true },
+      { text: 'Meal plans and recipe books', ai: true },
+      { text: 'AI workout builder', ai: true, soon: true },
+      { text: 'Habit tracking', soon: true },
+      { text: 'Academy: courses for your clients', soon: true }
+    ]
+  },
+  {
+    title: 'Engage',
+    icon: 'chat',
+    items: [
+      { text: 'Direct messages with clients on site', soon: true },
+      { text: 'Scheduled 1-on-1 sessions in the calendar' },
+      { text: 'Personalised messages: birthdays and achievements' }
+    ]
+  },
+  {
+    title: 'Manage',
+    icon: 'card',
+    items: [
+      { text: 'Client activity and progress analytics' },
+      { text: 'Integrated payments', soon: true },
+      { text: 'Scheduling and reminders' },
+      { text: 'Teams for companies', soon: true }
+    ]
+  }
 ];
 
+// Small sparkle icon used for AI-powered items
+function AiSpark() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className="ai-spark">
+      <path d="M12 2l1.8 6.2L20 10l-6.2 1.8L12 18l-1.8-6.2L4 10l6.2-1.8z" />
+      <path d="M19 16l.9 2.6L22.5 19l-2.6.9L19 22.5l-.9-2.6L15.5 19l2.6-.4z" />
+    </svg>
+  );
+}
+
 function LandingPage({ language, onLanguage, onLogin, onRegister, plans }) {
+  const [billing, setBilling] = useState('monthly');
   const scrollTo = (id) => (e) => {
     e.preventDefault();
     const el = document.getElementById(id);
@@ -2510,17 +2546,33 @@ function LandingPage({ language, onLanguage, onLogin, onRegister, plans }) {
       <section id="features" className="landing-section">
         <div className="landing-heading">
           <span className="landing-kicker">Features</span>
-          <h2>Everything you need, and nothing you don't</h2>
-          <p>Built around the daily work of coaching, from first invite to finished programme.</p>
+          <h2>Everything you need, in three areas</h2>
+          <p>Plan and coach, keep clients engaged, and run the business behind it.</p>
         </div>
-        <div className="feature-grid">
-          {LANDING_FEATURES.map((f) => (
-            <div key={f.title} className="feature-card">
-              <span className="feature-icon"><Icon name={f.icon} size={20} /></span>
-              <h3>{f.title}</h3>
-              <p>{f.text}</p>
-            </div>
+        <div className="feature-groups">
+          {LANDING_FEATURE_GROUPS.map((group) => (
+            <article key={group.title} className="feature-group">
+              <span className="feature-icon"><Icon name={group.icon} size={20} /></span>
+              <h3>{group.title}</h3>
+              <ul>
+                {group.items.map((item) => (
+                  <li key={item.text}>
+                    <span className="feature-text">{item.text}</span>
+                    <span className="feature-tags">
+                      {item.ai && <span className="ai-badge"><AiSpark /> AI</span>}
+                      {item.soon && <span className="soon-badge">Coming soon</span>}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </article>
           ))}
+        </div>
+        <div className="ai-strip">
+          <AiSpark />
+          <span>
+            <strong>AI-powered smart responses</strong> help coaches reply faster. Every reply is reviewed by the coach before it is sent.
+          </span>
         </div>
       </section>
 
@@ -2528,28 +2580,68 @@ function LandingPage({ language, onLanguage, onLogin, onRegister, plans }) {
         <div className="landing-heading">
           <span className="landing-kicker">Pricing</span>
           <h2>Start free, grow when you're ready</h2>
-          <p>Prices in euros, billed monthly. Change or cancel your plan at any time.</p>
+          <p>Prices in euros. Change or cancel your plan at any time.</p>
         </div>
-        <div className="pricing-grid">
-          {(plans || PLANS).map((plan) => (
-            <article key={plan.id} className={`pricing-card ${plan.price > 0 ? 'featured' : ''}`}>
-              {plan.price > 0 && <span className="pricing-badge">Most popular</span>}
-              <h3>{plan.name}</h3>
-              <p className="pricing-tagline">{plan.tagline}</p>
-              <div className="pricing-price">
-                {plan.price === 0 ? '0 EUR' : `${plan.price.toFixed(2)} EUR`}
-                <span>{plan.price === 0 ? ' forever' : ' / month'}</span>
-              </div>
-              <ul>
-                {plan.features.map((f) => (
-                  <li key={f}><Icon name="check" size={16} /><span>{f}</span></li>
-                ))}
-              </ul>
-              <button className={plan.price > 0 ? 'btn-primary' : 'btn-secondary'} onClick={onRegister}>
-                {plan.price === 0 ? 'Start free' : `Choose ${plan.name}`}
-              </button>
-            </article>
-          ))}
+        <div className="billing-toggle" role="group" aria-label="Billing period">
+          <button
+            type="button"
+            className={billing === 'monthly' ? 'active' : ''}
+            aria-pressed={billing === 'monthly'}
+            onClick={() => setBilling('monthly')}
+          >
+            Bill monthly
+          </button>
+          <button
+            type="button"
+            className={billing === 'annual' ? 'active' : ''}
+            aria-pressed={billing === 'annual'}
+            onClick={() => setBilling('annual')}
+          >
+            Bill annually <span className="save-pill">Save 16%</span>
+          </button>
+        </div>
+        <div className="pricing-grid pricing-grid-3">
+          {(plans || PLANS).filter((p) => p.active !== false).map((plan) => {
+            const shown = plan.price === 0 || billing === 'monthly'
+              ? plan.price
+              : Math.round(plan.price * 0.84 * 100) / 100;
+            return (
+              <article key={plan.id} className={`pricing-card ${plan.price > 0 ? 'featured' : ''}`}>
+                {plan.price > 0 && <span className="pricing-badge">Most popular</span>}
+                <h3>{plan.name}</h3>
+                <p className="pricing-tagline">{plan.tagline}</p>
+                <div className="pricing-price">
+                  {shown === 0 ? 'Free' : `${shown.toFixed(2)} EUR`}
+                  {shown > 0 && <span> / month</span>}
+                </div>
+                {shown > 0 && billing === 'annual' && (
+                  <p className="pricing-note">Billed annually: {(shown * 12).toFixed(2)} EUR per year</p>
+                )}
+                <ul>
+                  {plan.features.map((f) => (
+                    <li key={f}><Icon name="check" size={16} /><span>{f}</span></li>
+                  ))}
+                </ul>
+                <button className={plan.price > 0 ? 'btn-primary' : 'btn-secondary'} onClick={onRegister}>
+                  {plan.price === 0 ? 'Start free' : `Choose ${plan.name}`}
+                </button>
+              </article>
+            );
+          })}
+
+          <article className="pricing-card">
+            <h3>Enterprise</h3>
+            <p className="pricing-tagline">For teams, companies and large programmes</p>
+            <div className="pricing-price">Custom</div>
+            <ul>
+              <li><Icon name="check" size={16} /><span>Everything in Pro</span></li>
+              <li><Icon name="check" size={16} /><span>Team and company accounts</span></li>
+              <li><Icon name="check" size={16} /><span>Unlimited clients</span></li>
+              <li><Icon name="check" size={16} /><span>Dedicated support</span></li>
+              <li><Icon name="check" size={16} /><span>Custom integrations</span></li>
+            </ul>
+            <a className="btn-secondary contact-btn" href={`mailto:${ADMIN_CONTACT}?subject=BodUp%20Enterprise`}>Contact us</a>
+          </article>
         </div>
       </section>
 
