@@ -2632,7 +2632,6 @@ function LandingPage({ language, onLanguage, onLogin, onRegister, plans }) {
           <article className="pricing-card">
             <h3>Enterprise</h3>
             <p className="pricing-tagline">For teams, companies and large programmes</p>
-            <div className="pricing-price">Custom</div>
             <ul>
               <li><Icon name="check" size={16} /><span>Everything in Pro</span></li>
               <li><Icon name="check" size={16} /><span>Team and company accounts</span></li>
@@ -4680,6 +4679,7 @@ function App() {
   const [couponInput, setCouponInput] = useState('');
   const [appliedCoupon, setAppliedCoupon] = useState(null);
   const [couponMsg, setCouponMsg] = useState(null);
+  const [invoicesOpen, setInvoicesOpen] = useState(false);
   const [inviteCodeInput, setInviteCodeInput] = useState('');
   const [inviteCodeError, setInviteCodeError] = useState('');
 
@@ -7062,6 +7062,20 @@ function App() {
                       </section>
                     );
                   })}
+                  <article className="plan-card">
+                    <div className="plan-head">
+                      <h3>Enterprise</h3>
+                    </div>
+                    <p className="plan-tagline">For teams, companies and large programmes</p>
+                    <ul className="plan-features">
+                      <li><Icon name="check" size={16} /><span>Everything in Pro</span></li>
+                      <li><Icon name="check" size={16} /><span>Team and company accounts</span></li>
+                      <li><Icon name="check" size={16} /><span>Unlimited clients</span></li>
+                      <li><Icon name="check" size={16} /><span>Dedicated support</span></li>
+                      <li><Icon name="check" size={16} /><span>Custom integrations</span></li>
+                    </ul>
+                    <a className="btn-secondary contact-btn" href={`mailto:${ADMIN_CONTACT}?subject=BodUp%20Enterprise`}>Contact us</a>
+                  </article>
                 </div>
 
                 <section className="section">
@@ -7102,8 +7116,13 @@ function App() {
                 </section>
 
                 <section className="section">
-                  <h3>Invoice history</h3>
-                  {billing.invoices.length === 0 ? (
+                  <button type="button" className="collapse-head" aria-expanded={invoicesOpen} onClick={() => setInvoicesOpen(!invoicesOpen)}>
+                    <h3>Invoice history</h3>
+                    <span className="collapse-meta">
+                      {billing.invoices.length} {billing.invoices.length === 1 ? 'invoice' : 'invoices'} - {invoicesOpen ? 'Hide' : 'Show'}
+                    </span>
+                  </button>
+                  {invoicesOpen && (billing.invoices.length === 0 ? (
                     <p className="empty-state">No invoices yet. They appear here after your first payment.</p>
                   ) : (
                     <div className="table-scroll">
@@ -7135,7 +7154,7 @@ function App() {
                         </tbody>
                       </table>
                     </div>
-                  )}
+                  ))}
                 </section>
               </div>
             )}
