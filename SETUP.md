@@ -232,6 +232,40 @@ match /adminAudit/{id} { allow read, write: if false; }
 
 ---
 
+### 2.13 Mailbox: alerts, translation, reply drafts and safety
+
+The mailbox is in `api/messages.js`. It needs these settings and rules.
+
+**A. Vercel environment variables** (Production, Preview and Development)
+- `ANTHROPIC_API_KEY`: your Anthropic API key. Needed only for **Translate** and **Draft reply**. Without it, those buttons say they are not switched on yet, and everything else still works. Set a monthly spending limit in your Anthropic account.
+- `RESEND_API_KEY` and `FROM_EMAIL`: already set for the reminder emails. The new-message alerts use them too.
+
+**B. Database rules** (add next to the other admin collections, and make sure no broad rule remains)
+```
+match /messages/{id} { allow read, write: if false; }
+match /conversations/{id} { allow read, write: if false; }
+match /templates/{id} { allow read, write: if false; }
+match /blocks/{id} { allow read, write: if false; }
+match /reports/{id} { allow read, write: if false; }
+```
+All mailbox reads and writes go through the server, so these rules don't affect the feature.
+
+**C. What each feature does**
+- **Email alerts:** when someone receives a message, they get one email at most every 30 minutes for that conversation. The email says who sent it and asks them to sign in. It does not include the message text. Muted conversations send no alerts.
+- **Quick reply templates:** each person keeps their own templates. Three built-in ones are always available. Save a template from the composer, and delete your own templates.
+- **Translation:** any participant can translate a message into Estonian, Russian or English. Translations are shown under the message and are not stored.
+- **Reply drafts (coaches only):** the coach asks for a draft, reads it, edits it, and sends it. A draft is never sent automatically.
+- **Search:** searches your own messages, by name or text, ignoring capital letters.
+- **Pin, mute, archive:** pinned conversations stay at the top. Muted ones don't alert or add to the badge. Archived ones move to the Archived filter.
+- **Block and report:** a block stops messages in both directions, and unblocking restores them. Reports go to the admin's **Reports** tab, where they can be closed or reopened.
+- **Pictures:** JPG or PNG, shrunk to fit, up to about 300 KB each. Larger files need Firebase Storage, which requires the Blaze plan, so that is not used.
+
+**D. Limits**
+- Search checks up to 200 messages per conversation, so it's fine for now. Very large histories would need a proper search index.
+- Pictures are stored inside the message record, which Firestore limits to 1 MB per record.
+
+---
+
 ## 3. Using the new features
 
 - **Add feedback to calendar**: on any active client's page, on their card, or from the Calendar page. Pick Google Meet or email, check the previews, and add it. You get a reminder email and the client gets their email on the day.
