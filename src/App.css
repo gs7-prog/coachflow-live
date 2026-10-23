@@ -6768,3 +6768,100 @@ textarea:focus-visible {
 .msg-support {
   background: var(--primary-soft);
 }
+
+/* =========================================================================
+   Round 13: calendar head alignment, Close account under Profile, landing navigation
+   ========================================================================= */
+.calendar-head {
+  max-width: 680px;
+  margin: 0 auto 18px;
+  align-items: center;
+}
+
+.danger-zone {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.danger-zone h4 {
+  font-size: 15px;
+  font-weight: 800;
+  margin-bottom: 4px;
+  color: var(--red-ink);
+}
+
+.danger-zone p {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+.landing-links {
+  gap: 10px;
+}
+
+.landing-dd-btn {
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  transition: background 0.2s, color 0.2s;
+}
+
+.landing-mega {
+  position: absolute;
+  top: calc(100% + 12px);
+  left: -8px;
+  width: 360px;
+  z-index: 60;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  box-shadow: var(--shadow-lg);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.landing-mega::before {
+  content: '';
+  position: absolute;
+  top: -12px;
+  left: 0;
+  right: 0;
+  height: 12px;
+}
+
+.landing-mega-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 14px 16px;
+  border: none;
+  border-radius: 14px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+  transition: background 0.2s;
+}
+
+.landing-mega-item:hover {
+  background: var(--primary-soft);
+}
+
+.landing-mega-item strong {
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.landing-mega-item small {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
