@@ -645,7 +645,7 @@ function LanguageMenu({ language, onChange }) {
   );
 }
 
-function SettingsMenu({ theme, onToggleTheme, onOpenModal }) {
+function SettingsMenu({ theme, onToggleTheme, onOpenModal, onSignOut }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useClickAway(ref, () => setOpen(false));
@@ -682,9 +682,9 @@ function SettingsMenu({ theme, onToggleTheme, onOpenModal }) {
             <span>Contact admin</span>
           </button>
           <div className="menu-divider" />
-          <button className="menu-item danger" role="menuitem" onClick={() => choose('close')}>
-            <Icon name="alert" size={18} />
-            <span>Close account</span>
+          <button className="menu-item danger" role="menuitem" onClick={() => { setOpen(false); onSignOut(); }}>
+            <Icon name="logout" size={18} />
+            <span>Log out</span>
           </button>
         </div>
       )}
@@ -2465,18 +2465,18 @@ function AiSpark() {
 
 // Landing pages: Solutions and Features each open their own page
 const SOLUTION_PAGES = [
-  { id: 'solutions-coaches', label: 'For coaches' },
-  { id: 'solutions-clients', label: 'For clients' },
-  { id: 'solutions-routine', label: 'For a healthy routine' }
+  { id: 'solutions-coaches', label: 'For coaches', desc: 'Run your coaching practice: clients, check-ins, feedback and automated reminders.' },
+  { id: 'solutions-clients', label: 'For trainees', desc: 'Stay on track between sessions: log your week, see your progress and book feedback.' },
+  { id: 'solutions-routine', label: 'For a healthy routine', desc: 'Practical habits: batch cooking, shopping lists and evidence-based tips.' }
 ];
 const FEATURE_PAGES = [
-  { id: 'features-coach', label: 'Coach' },
-  { id: 'features-engage', label: 'Engage' },
-  { id: 'features-manage', label: 'Manage' }
+  { id: 'features-coach', label: 'Coach', desc: 'AI-powered planning, meal plans and a growing learning library.' },
+  { id: 'features-engage', label: 'Engage', desc: 'Chat, scheduled sessions and personal messages that keep clients close.' },
+  { id: 'features-manage', label: 'Manage', desc: 'Analytics, payments, scheduling and team tools for growing businesses.' }
 ];
 const LANDING_PAGE_CONTENT = {
   'solutions-coaches': { kicker: 'Solutions', title: 'For coaches', intro: LANDING_SOLUTIONS[0].text, items: LANDING_SOLUTIONS[0].points.map((t) => ({ text: t })) },
-  'solutions-clients': { kicker: 'Solutions', title: 'For clients', intro: LANDING_SOLUTIONS[1].text, items: LANDING_SOLUTIONS[1].points.map((t) => ({ text: t })) },
+  'solutions-clients': { kicker: 'Solutions', title: 'For trainees', intro: LANDING_SOLUTIONS[1].text, items: LANDING_SOLUTIONS[1].points.map((t) => ({ text: t })) },
   'solutions-routine': { kicker: 'Solutions', title: 'For a healthy routine', intro: LANDING_SOLUTIONS[2].text, items: LANDING_SOLUTIONS[2].points.map((t) => ({ text: t })) },
   'features-coach': {
     kicker: 'Features', title: 'Coach',
@@ -2517,18 +2517,19 @@ function LandingDropdown({ label, items, onPick }) {
   const ref = useRef(null);
   useClickAway(ref, () => setOpen(false));
   return (
-    <div className="menu-wrap landing-dd" ref={ref}>
-      <button type="button" className="landing-dd-btn" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
+    <div className="menu-wrap landing-dd" ref={ref} onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+      <button type="button" className="landing-dd-btn" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(true)}>
         {label} <Icon name="chevronDown" size={14} />
       </button>
       {open && (
-        <ul className="menu-popover landing-dd-menu" role="menu">
+        <div className="landing-mega" role="menu" aria-label={label}>
           {items.map((it) => (
-            <li key={it.id}>
-              <button type="button" className="menu-item" role="menuitem" onClick={() => { setOpen(false); onPick(it.id); }}>{it.label}</button>
-            </li>
+            <button key={it.id} type="button" className="landing-mega-item" role="menuitem" onClick={() => { setOpen(false); onPick(it.id); }}>
+              <strong>{it.label}</strong>
+              <small>{it.desc}</small>
+            </button>
           ))}
-        </ul>
+        </div>
       )}
     </div>
   );
@@ -7238,6 +7239,7 @@ function App() {
                 theme={theme}
                 onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
                 onOpenModal={openModal}
+                onSignOut={handleSignOut}
               />
             </div>
           </header>
@@ -7456,7 +7458,7 @@ function App() {
 
             {currentPage === 'calendar' && (
               <div className="dashboard-view">
-                <div className="page-header page-header-row">
+                <div className="page-header page-header-row calendar-head">
                   <div>
                     <h2>Calendar</h2>
                     <p>Feedback sessions and reminders for your clients.</p>
@@ -8131,6 +8133,11 @@ function App() {
                 </button>
               </div>
             </form>
+            <div className="danger-zone">
+              <h4>Close account</h4>
+              <p>Closing your account signs you out and blocks sign-in. Your clients and their data are kept.</p>
+              <button type="button" className="btn-danger" onClick={() => openModal('close')}>Close account</button>
+            </div>
           </Modal>
         )}
 
@@ -8872,6 +8879,7 @@ function App() {
                 theme={theme}
                 onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
                 onOpenModal={openClientSettings}
+                onSignOut={handleSignOut}
               />
             </div>
           </header>
