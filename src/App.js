@@ -2536,7 +2536,7 @@ function LandingDropdown({ label, items, onPick }) {
 }
 
 // One separate page for a Solutions or Features item
-function LandingSubPage({ page, setPage, onRegister, onLogin, language, onLanguage }) {
+function LandingSubPage({ page, setPage, onRegister, onRegisterCoach, onLogin, language, onLanguage }) {
   const c = LANDING_PAGE_CONTENT[page];
   return (
     <div className="landing">
@@ -2571,7 +2571,7 @@ function LandingSubPage({ page, setPage, onRegister, onLogin, language, onLangua
           ))}
         </ul>
         <div className="subpage-actions">
-          <button className="btn-primary btn-large" onClick={onRegister}>Register as a coach</button>
+          <button className="btn-primary btn-large" onClick={onRegisterCoach || onRegister}>Register as a coach</button>
           <button className="btn-secondary btn-large" onClick={() => setPage('home')}>Back to home</button>
         </div>
       </main>
@@ -2579,7 +2579,7 @@ function LandingSubPage({ page, setPage, onRegister, onLogin, language, onLangua
   );
 }
 
-function LandingPage({ language, onLanguage, onLogin, onRegister, plans }) {
+function LandingPage({ language, onLanguage, onLogin, onRegister, onRegisterCoach, plans }) {
   const [billing, setBilling] = useState('monthly');
   const [page, setPage] = useState('home');
   const scrollTo = (id) => (e) => {
@@ -2589,7 +2589,7 @@ function LandingPage({ language, onLanguage, onLogin, onRegister, plans }) {
   };
 
   if (page !== 'home') {
-    return <LandingSubPage page={page} setPage={setPage} onRegister={onRegister} onLogin={onLogin} language={language} onLanguage={onLanguage} />;
+    return <LandingSubPage page={page} setPage={setPage} onRegister={onRegister} onRegisterCoach={onRegisterCoach} onLogin={onLogin} language={language} onLanguage={onLanguage} />;
   }
 
   return (
@@ -2619,7 +2619,7 @@ function LandingPage({ language, onLanguage, onLogin, onRegister, plans }) {
             spend time coaching and clients always know what comes next.
           </p>
           <div className="landing-cta">
-            <button className="btn-primary btn-large" onClick={onRegister}>Register as a coach</button>
+            <button className="btn-primary btn-large" onClick={onRegisterCoach || onRegister}>Register as a coach</button>
             <button className="btn-secondary btn-large" onClick={scrollTo('pricing')}>See pricing</button>
           </div>
           <p className="landing-note">Free to start. Clients join with an invite code from their coach.</p>
@@ -2800,11 +2800,46 @@ function LandingPage({ language, onLanguage, onLogin, onRegister, plans }) {
 }
 
 // ---------------------------------------------------------------------------
-// Registration and onboarding for coaches (BodUp)
-// Steps: 1 create account, 2 welcome, 3 confirm email, 4 profile photo (skippable),
-// 5 coaching type, 6 niche, 7 six-month goals, 8 current tools, 9 client base, 10 workspace name
+// Registration and onboarding for coaches and trainees (BodUp)
+// Both flows have at most 6 steps. See OnboardingFlow (coach) and TraineeOnboarding (trainee).
 // ---------------------------------------------------------------------------
-const ONB_TOTAL = 10;
+// BodUp keeps this share of every marketplace payment. The coach receives the rest.
+const MARKETPLACE_FEE = 0.07;
+const MARKET_CATEGORIES = ['Nutrition', 'Gym training', 'Running', 'Habits'];
+const COACH_LANGUAGES = ['English', 'Estonian', 'Russian', 'Finnish', 'Latvian', 'German', 'Other'];
+const EDUCATE_TOPICS = [
+  'Nutrition and meal planning',
+  'Living habits and routines',
+  'Sleep and recovery',
+  'Mindset and motivation',
+  'Injury prevention and mobility',
+  'Other'
+];
+const COACH_MODES = ['Online', 'In person', 'Both'];
+const EXPERIENCE_YEARS = ['Less than 1 year', '1-3 years', '3-5 years', '5-10 years', '10+ years'];
+const ACTIVITY_OPTIONS = [
+  { value: 'sedentary', label: 'Sedentary (little exercise)', steps: 4000 },
+  { value: 'light', label: 'Light (1-3 days a week)', steps: 6000 },
+  { value: 'moderate', label: 'Moderate (3-5 days a week)', steps: 8000 },
+  { value: 'active', label: 'Active (6-7 days a week)', steps: 10000 },
+  { value: 'very active', label: 'Very active (twice a day)', steps: 12000 }
+];
+const MAIN_GOALS = [
+  'Lose weight',
+  'Build muscle and strength',
+  'Run my first race or run faster',
+  'Build healthier habits',
+  'Feel fitter and healthier overall'
+];
+const TRAINEE_LEVELS = ['Beginner', 'Intermediate', 'Advanced'];
+const TRAINEE_LANGUAGES = ['English', 'Estonian', 'Russian', 'Any language'];
+const BUDGET_OPTIONS = ['Under 30 EUR', '30-60 EUR', '60-100 EUR', 'Over 100 EUR', 'Not sure yet'];
+const STYLE_OPTIONS = [
+  'A structured plan to follow',
+  'Regular check-ins and feedback',
+  'Flexible guidance when I need it',
+  'Accountability and motivation'
+];
 const OTHER = 'Other';
 const COACH_TYPES = [
   'Online Fitness Coach',
@@ -2867,17 +2902,17 @@ const authErrorText = (err) => {
 };
 
 // Shared frame for the registration screens: a centred card, not a full-screen page
-function OnbFrame({ step, children, footer, wide = false }) {
+function OnbFrame({ step, total = 6, children, footer, wide = false }) {
   return (
     <div className="onb">
       <div className={`onb-card ${wide ? 'wide' : ''}`}>
         <header className="onb-top">
           <BrandMark size={26} />
-          {step && <span className="onb-step">Step {step} of {ONB_TOTAL}</span>}
+          {step && <span className="onb-step">Step {step} of {total}</span>}
         </header>
         {step && (
           <div className="onb-progress" aria-hidden="true">
-            <span style={{ width: `${(step / ONB_TOTAL) * 100}%` }} />
+            <span style={{ width: `${(step / total) * 100}%` }} />
           </div>
         )}
         <main className="onb-body">{children}</main>
@@ -3066,13 +3101,120 @@ function PhotoPicker({ onUse, onCancel, busy = false, saveLabel = 'Use this phot
 }
 
 // ---------------------------------------------------------------------------
-// Step 1: create account (split card, as in the reference)
+// Account type choice, then account creation (step 1 of both flows)
 // ---------------------------------------------------------------------------
-function AccountStep({ onBack, onSignIn, onGoogle, onCreated, onInviteCode }) {
+const isGoogleUser = (u) => !!(u && u.providerData && u.providerData.some((p) => p.providerId === 'google.com'));
+const num = (v) => {
+  const n = parseFloat(String(v === undefined || v === null ? '' : v).replace(',', '.'));
+  return Number.isFinite(n) ? n : NaN;
+};
+const feePercentText = `${Math.round(MARKETPLACE_FEE * 100)}%`;
+const afterFee = (price) => Math.round(price * (1 - MARKETPLACE_FEE) * 100) / 100;
+const euro = (n) => `\u20ac${(Math.round(n * 100) / 100).toFixed(2)}`;
+
+// Small helper for chip choices. "selected" is an array (many answers) or a string (one answer)
+function ChipGroup({ options, selected, onPick }) {
+  const isOn = (o) => (Array.isArray(selected) ? selected.includes(o) : selected === o);
+  return (
+    <div className="onb-chips">
+      {options.map((o) => (
+        <button
+          key={o}
+          type="button"
+          className={`onb-chip-pill ${isOn(o) ? 'selected' : ''}`}
+          aria-pressed={isOn(o)}
+          onClick={() => onPick(o)}
+        >
+          {o}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function AuthSide({ role }) {
+  const points =
+    role === 'trainee'
+      ? [
+          'Find coaches for nutrition, training, running and habits',
+          'Track your weight, water and weekly progress',
+          'Message your coach and book sessions'
+        ]
+      : role === 'coach'
+      ? [
+          'Manage every client in one workspace',
+          'Sell programmes and coaching on the marketplace',
+          'Check-ins, feedback and sessions in one calendar'
+        ]
+      : [
+          'Coaches grow their business and manage clients',
+          'Trainees find the right coach and stay on track',
+          'Plans, progress, nutrition and chat in one place'
+        ];
+  return (
+    <aside className="onb-side">
+      <BrandMark size={28} className="onb-side-brand" />
+      <span className="onb-pill">{role === 'coach' ? 'For coaches' : role === 'trainee' ? 'For trainees' : 'Start free'}</span>
+      <h1>Your ultimate training and coaching partner.</h1>
+      <p>
+        Whether you coach or train, BodUp brings plans, progress, nutrition and conversations together in one place.
+      </p>
+      <ul>
+        {points.map((p) => (
+          <li key={p}><Icon name="check" size={15} /> {p}</li>
+        ))}
+      </ul>
+    </aside>
+  );
+}
+
+function AccountTypeStep({ notice, onChoose, onBack, onSignIn }) {
+  return (
+    <div className="onb">
+      <div className="onb-card onb-card-split">
+        <AuthSide role={null} />
+        <main className="onb-form-side">
+          <h2>How will you use BodUp?</h2>
+          <p className="onb-sub">Choose your account type. We will set up the right space for you.</p>
+          {notice && <p className="form-message error">{notice}</p>}
+          <div className="type-grid">
+            <button type="button" className="type-card" onClick={() => onChoose('coach')}>
+              <span className="type-icon"><Icon name="users" size={22} /></span>
+              <span className="type-text">
+                <strong>I am a coach</strong>
+                <small>Manage clients, sell your services and get discovered on the marketplace.</small>
+              </span>
+              <span className="type-go"><Icon name="expand" size={16} /></span>
+            </button>
+            <button type="button" className="type-card" onClick={() => onChoose('trainee')}>
+              <span className="type-icon"><Icon name="user" size={22} /></span>
+              <span className="type-text">
+                <strong>I am a trainee</strong>
+                <small>Track your progress and find the right coach for nutrition, training, running or habits.</small>
+              </span>
+              <span className="type-go"><Icon name="expand" size={16} /></span>
+            </button>
+          </div>
+          <p className="onb-switch">
+            Already have an account? <button type="button" className="link-btn" onClick={onSignIn}>Sign in</button>
+          </p>
+          <div className="btn-home-wrap">
+            <button type="button" className="btn-home" onClick={onBack}>
+              <Icon name="back" size={16} /> Back to home
+            </button>
+          </div>
+        </main>
+      </div>
+    </div>
+  );
+}
+
+function AccountStep({ role, onBack, onChangeType, onSignIn, onGoogle, onCreated, onInviteCode }) {
   const [form, setForm] = useState({ name: '', email: '', password: '', confirm: '', terms: false });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [show, setShow] = useState(false);
+  const isCoach = role === 'coach';
 
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.type === 'checkbox' ? e.target.checked : e.target.value });
 
@@ -3090,23 +3232,39 @@ function AccountStep({ onBack, onSignIn, onGoogle, onCreated, onInviteCode }) {
     try {
       const created = await createUserWithEmailAndPassword(auth, email, form.password);
       await updateProfile(created.user, { displayName: name });
-      await setDoc(doc(db, 'users', created.user.uid), {
-        email,
-        displayName: name,
-        role: 'coach',
-        status: 'active',
-        onboardingComplete: false,
-        onboardingStep: 2,
-        onboarding: {},
-        createdAt: serverTimestamp()
-      });
-      await setDoc(
-        doc(db, 'coaches', created.user.uid),
-        { userId: created.user.uid, name, email, createdAt: serverTimestamp() },
-        { merge: true }
-      );
+      if (isCoach) {
+        await setDoc(doc(db, 'users', created.user.uid), {
+          email,
+          displayName: name,
+          role: 'coach',
+          status: 'active',
+          onboardingComplete: false,
+          onboardingStep: 2,
+          onboarding: {},
+          createdAt: serverTimestamp()
+        });
+        await setDoc(
+          doc(db, 'coaches', created.user.uid),
+          { userId: created.user.uid, name, email, createdAt: serverTimestamp() },
+          { merge: true }
+        );
+      } else {
+        // Trainees use the client portal. traineeSince is used later for the free-use limit.
+        await setDoc(doc(db, 'users', created.user.uid), {
+          email,
+          displayName: name,
+          role: 'client',
+          accountType: 'trainee',
+          status: 'active',
+          onboardingComplete: false,
+          onboardingStep: 2,
+          onboarding: {},
+          traineeSince: serverTimestamp(),
+          createdAt: serverTimestamp()
+        });
+      }
       await sendEmailVerification(created.user);
-      onCreated({ name });
+      onCreated({ name, role: isCoach ? 'coach' : 'client' });
     } catch (err) {
       setError(authErrorText(err));
       setBusy(false);
@@ -3116,24 +3274,15 @@ function AccountStep({ onBack, onSignIn, onGoogle, onCreated, onInviteCode }) {
   return (
     <div className="onb">
       <div className="onb-card onb-card-split">
-        <aside className="onb-side">
-          <BrandMark size={28} className="onb-side-brand" />
-          <span className="onb-pill">Start free</span>
-          <h1>Coaching, all in one place.</h1>
-          <p>Clients, check-ins, feedback sessions and learning, with your reminders handled for you.</p>
-          <ul>
-            <li><Icon name="check" size={15} /> Manage every client in one workspace</li>
-            <li><Icon name="check" size={15} /> Check-ins, feedback and learning</li>
-            <li><Icon name="check" size={15} /> Sessions and reminders in one calendar</li>
-          </ul>
-        </aside>
+        <AuthSide role={role} />
 
         <main className="onb-form-side">
-          <button className="btn-back icon-text" onClick={onBack}>
-            <Icon name="back" size={16} /> Back to home
-          </button>
-          <h2>Create your account</h2>
-          <p className="onb-sub">Sign up free and we will bring you straight in.</p>
+          <span className="onb-eyebrow">Step 1 of 6</span>
+          <h2>{isCoach ? 'Create your coach account' : 'Create your trainee account'}</h2>
+          <p className="onb-sub">
+            {isCoach ? 'Sign up free and set up your coaching space in a few short steps.' : 'Sign up free and tell us a little about you.'}{' '}
+            <button type="button" className="link-btn" onClick={onChangeType}>Change account type</button>
+          </p>
 
           <form className="onb-form" onSubmit={submit}>
             <input type="text" placeholder="Full name" autoComplete="name" value={form.name} onChange={set('name')} />
@@ -3173,6 +3322,11 @@ function AccountStep({ onBack, onSignIn, onGoogle, onCreated, onInviteCode }) {
           <p className="onb-switch">
             Are you a client with an invite code? <button type="button" className="link-btn" onClick={onInviteCode}>Join here</button>
           </p>
+          <div className="btn-home-wrap">
+            <button type="button" className="btn-home" onClick={onBack}>
+              <Icon name="back" size={16} /> Back to home
+            </button>
+          </div>
         </main>
       </div>
     </div>
@@ -3180,29 +3334,9 @@ function AccountStep({ onBack, onSignIn, onGoogle, onCreated, onInviteCode }) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 2: welcome
+// Step 2: confirm email (checks automatically)
 // ---------------------------------------------------------------------------
-function WelcomeStep({ name, onNext }) {
-  return (
-    <OnbFrame
-      step={2}
-      footer={<button className="btn-primary onb-next" onClick={onNext}>Start your setup <Icon name="expand" size={16} /></button>}
-    >
-      <div className="onb-welcome">
-        <p className="onb-hello">{firstName(name)}, you made it.</p>
-        <h1>Welcome to <span className="grad-text">BodUp.</span></h1>
-        <p className="onb-sub">
-          A few short steps to set up your coaching space. Everything can be changed later.
-        </p>
-      </div>
-    </OnbFrame>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Step 3: confirm email (checks automatically)
-// ---------------------------------------------------------------------------
-function VerifyStep({ user, onVerified, onStartOver }) {
+function VerifyStep({ user, step = 2, total = 6, onVerified, onStartOver }) {
   const [sent, setSent] = useState('');
   const [cooldown, setCooldown] = useState(0);
   const [checking, setChecking] = useState(false);
@@ -3230,6 +3364,7 @@ function VerifyStep({ user, onVerified, onStartOver }) {
 
   // Watch for the confirmation every few seconds, so the user does not have to press anything
   useEffect(() => {
+    if (auth.currentUser) check();
     const timer = setInterval(() => {
       if (auth.currentUser) check();
     }, 3000);
@@ -3262,7 +3397,8 @@ function VerifyStep({ user, onVerified, onStartOver }) {
   const email = user.email || 'your email';
   return (
     <OnbFrame
-      step={3}
+      step={step}
+      total={total}
       footer={
         <button className="btn-secondary" onClick={check} disabled={checking}>
           {checking ? 'Checking...' : 'Already confirmed? Check now'}
@@ -3318,10 +3454,16 @@ function VerifyStep({ user, onVerified, onStartOver }) {
 }
 
 // ---------------------------------------------------------------------------
-// Steps 4 to 10
+// Coach onboarding. Steps: 1 account, 2 confirm email, 3 profile and workspace,
+// 4 your coaching, 5 marketplace profile, 6 pricing and publish.
+// People who sign up with Google skip step 2, so they see 5 steps.
 // ---------------------------------------------------------------------------
 function OnboardingFlow({ user, startStep, startAnswers, onFinished, onStartOver }) {
-  const [step, setStep] = useState(startStep || 2);
+  const viaGoogle = isGoogleUser(user);
+  const total = viaGoogle ? 5 : 6;
+  const shown = (s) => (viaGoogle && s > 2 ? s - 1 : s);
+  const firstStep = viaGoogle ? 3 : 2;
+  const [step, setStep] = useState(Math.min(6, Math.max(firstStep, startStep || firstStep)));
   const [a, setA] = useState({
     coachType: '',
     coachTypeOther: '',
@@ -3334,6 +3476,19 @@ function OnboardingFlow({ user, startStep, startAnswers, onFinished, onStartOver
     workspaceName: '',
     slug: '',
     photoUrl: '',
+    headline: '',
+    bio: '',
+    specialties: [],
+    languages: [],
+    languageOther: '',
+    educates: [],
+    educateOther: '',
+    mode: '',
+    experience: '',
+    consultPrice: '',
+    consultMinutes: '45',
+    monthlyPrice: '',
+    submitNow: true,
     ...(startAnswers || {})
   });
   const [busy, setBusy] = useState(false);
@@ -3364,56 +3519,12 @@ function OnboardingFlow({ user, startStep, startAnswers, onFinished, onStartOver
     }
   };
 
-  const back = () => setStep(Math.max(4, step - 1));
-
-  const toggle = (list, value) => (list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
-
-  const hasOtherTool = a.tools.some(isOtherTool);
-
-  const finish = async () => {
-    const workspaceName = a.workspaceName.trim();
-    const slug = slugify(a.slug);
-    if (workspaceName.length < 2) return setError('Name your workspace (at least 2 characters).');
-    if (!a.slug.trim()) return setError('Choose your invite link. Clients use it to find you.');
-    if (!SLUG_PATTERN.test(slug)) return setError('Your link needs 3 to 30 letters or numbers, for example "your-name".');
-    setBusy(true);
+  const back = () => {
     setError('');
-    try {
-      const taken = await getDoc(doc(db, 'inviteLinks', slug));
-      if (taken.exists() && taken.data().coachId !== user.uid) {
-        setError('That link is already taken. Try another one.');
-        setBusy(false);
-        return;
-      }
-      await setDoc(doc(db, 'inviteLinks', slug), { coachId: user.uid, createdAt: serverTimestamp() }, { merge: true });
-      await setDoc(
-        doc(db, 'users', user.uid),
-        {
-          workspaceName,
-          inviteSlug: slug,
-          onboarding: { ...a, workspaceName, slug },
-          onboardingStep: ONB_TOTAL,
-          onboardingComplete: true,
-          completedAt: serverTimestamp()
-        },
-        { merge: true }
-      );
-      // Lets the home screen prompt appear once the coach reaches the dashboard
-      window.dispatchEvent(new Event('bodup-onboarding-complete'));
-      onFinished();
-    } catch (err) {
-      setError('Could not finish setup. Try again.');
-      setBusy(false);
-    }
+    setStep(Math.max(3, step - 1));
   };
-
-  if (step === 2) {
-    return <WelcomeStep name={name} onNext={() => save(3)} />;
-  }
-
-  if (step === 3) {
-    return <VerifyStep user={user} onVerified={() => save(4)} onStartOver={onStartOver} />;
-  }
+  const toggle = (list, value) => (list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
+  const hasOtherTool = a.tools.some(isOtherTool);
 
   const footerNav = (onNext, nextLabel, nextDisabled, backAllowed = true) => (
     <div className="onb-nav">
@@ -3428,234 +3539,150 @@ function OnboardingFlow({ user, startStep, startAnswers, onFinished, onStartOver
     </div>
   );
 
-  if (step === 4) {
+  // Step 3: checks the invite link is free, then continues
+  const saveProfileStep = async () => {
+    const workspaceName = a.workspaceName.trim();
+    const slug = slugify(a.slug);
+    if (workspaceName.length < 2) return setError('Name your workspace (at least 2 characters).');
+    if (!SLUG_PATTERN.test(slug)) return setError('Your link needs 3 to 30 letters or numbers, for example "your-name".');
+    setBusy(true);
+    setError('');
+    try {
+      const taken = await getDoc(doc(db, 'inviteLinks', slug));
+      if (taken.exists() && taken.data().coachId !== user.uid) {
+        setError('That link is already taken. Try another one.');
+        setBusy(false);
+        return;
+      }
+    } catch (err) {
+      setError('Could not check that link. Try again.');
+      setBusy(false);
+      return;
+    }
+    setBusy(false);
+    await save(4, { workspaceName, slug });
+  };
+
+  const finish = async () => {
+    const workspaceName = a.workspaceName.trim();
+    const slug = slugify(a.slug);
+    const consult = num(a.consultPrice);
+    const monthly = num(a.monthlyPrice);
+    if (!(consult >= 0 && consult <= 1000)) return setError('Enter a consultation price between 0 and 1000 EUR. Use 0 for a free intro call.');
+    if (!(monthly >= 0 && monthly <= 5000)) return setError('Enter a monthly coaching price between 0 and 5000 EUR.');
+    if (a.submitNow && !(monthly > 0)) return setError('Add a monthly coaching price to submit your profile to the marketplace.');
+    setBusy(true);
+    setError('');
+    try {
+      const taken = await getDoc(doc(db, 'inviteLinks', slug));
+      if (taken.exists() && taken.data().coachId !== user.uid) {
+        setStep(3);
+        setError('That invite link was taken in the meantime. Choose another one.');
+        setBusy(false);
+        return;
+      }
+      await setDoc(doc(db, 'inviteLinks', slug), { coachId: user.uid, createdAt: serverTimestamp() }, { merge: true });
+
+      const languages = a.languages.map((l) => (l === OTHER ? a.languageOther.trim() : l)).filter(Boolean);
+      const educates = a.educates.map((l) => (l === OTHER ? a.educateOther.trim() : l)).filter(Boolean);
+      const coachTypeText = a.coachType === OTHER ? a.coachTypeOther.trim() : a.coachType;
+
+      // The marketplace profile. A coach can only ever submit it for review (pending) or keep it as a draft.
+      await setDoc(
+        doc(db, 'coachProfiles', user.uid),
+        {
+          userId: user.uid,
+          displayName: name,
+          photoUrl: a.photoUrl || '',
+          workspaceName,
+          inviteSlug: slug,
+          coachType: coachTypeText,
+          niche: a.niche.trim(),
+          headline: a.headline.trim(),
+          bio: a.bio.trim(),
+          specialties: a.specialties,
+          languages,
+          educates,
+          mode: a.mode,
+          experience: a.experience,
+          consultationPrice: consult,
+          consultationMinutes: Number(a.consultMinutes) || 45,
+          monthlyPrice: monthly,
+          currency: 'EUR',
+          status: a.submitNow ? 'pending' : 'draft',
+          submittedAt: a.submitNow ? serverTimestamp() : null,
+          updatedAt: serverTimestamp(),
+          createdAt: serverTimestamp()
+        },
+        { merge: true }
+      );
+
+      await setDoc(
+        doc(db, 'users', user.uid),
+        {
+          workspaceName,
+          inviteSlug: slug,
+          photoUrl: a.photoUrl || '',
+          onboarding: { ...a, workspaceName, slug },
+          onboardingStep: 6,
+          onboardingComplete: true,
+          marketplaceStatus: a.submitNow ? 'pending' : 'draft',
+          completedAt: serverTimestamp()
+        },
+        { merge: true }
+      );
+      // Lets the home screen prompt appear once the coach reaches the dashboard
+      window.dispatchEvent(new Event('bodup-onboarding-complete'));
+      onFinished();
+    } catch (err) {
+      setError('Could not finish setup. Try again.');
+      setBusy(false);
+    }
+  };
+
+  // ---- Step 2: confirm email ----
+  if (step === 2) {
+    return <VerifyStep user={user} step={2} total={total} onVerified={() => save(3)} onStartOver={onStartOver} />;
+  }
+
+  // ---- Step 3: profile and workspace ----
+  if (step === 3) {
     if (photoMode) {
       return (
-        <OnbFrame step={4} footer={null}>
+        <OnbFrame step={shown(3)} total={total} footer={null}>
           <div className="onb-center">
             <h1 className="onb-title">Upload a <span className="grad-text">profile</span> picture of yourself</h1>
             <PhotoPicker
-              busy={busy}
-              onUse={(dataUrl) => save(5, { photoUrl: dataUrl })}
+              onUse={(dataUrl) => {
+                setA({ ...a, photoUrl: dataUrl });
+                setPhotoMode(false);
+              }}
               onCancel={() => setPhotoMode(false)}
             />
           </div>
         </OnbFrame>
       );
     }
+    const host = window.location.host;
+    const linkValue = slugify(a.slug);
+    const linkReady = SLUG_PATTERN.test(linkValue);
+    const nameReady = a.workspaceName.trim().length >= 2;
     return (
-      <OnbFrame step={4} footer={null}>
-        <div className="onb-center">
-          <h1 className="onb-title">Add a <span className="grad-text">profile</span> picture</h1>
-          <p className="onb-sub">Clients see your photo when they open BodUp with your invite. You can skip this and add one later under My profile.</p>
-          <div className="onb-photo-choice">
-            <button className="btn-primary" onClick={() => setPhotoMode(true)}>
-              <Icon name="camera" size={16} /> Add a photo
-            </button>
-            <button className="btn-secondary" onClick={() => save(5)} disabled={busy}>Skip for now</button>
-          </div>
-          {error && <p className="form-message error">{error}</p>}
-          <div className="onb-nav">
-            <button className="btn-back icon-text" disabled>
-              <Icon name="back" size={16} /> Back
-            </button>
-            <span />
-          </div>
-        </div>
-      </OnbFrame>
-    );
-  }
-
-  if (step === 5) {
-    const typeOk = a.coachType && (a.coachType !== OTHER || a.coachTypeOther.trim());
-    return (
-      <OnbFrame
-        step={5}
-        footer={footerNav(() => save(6, { coachType: a.coachType, coachTypeOther: a.coachType === OTHER ? a.coachTypeOther.trim() : '' }), 'Next', !typeOk)}
-      >
-        <div className="onb-center">
-          <span className="onb-eyebrow">Question 1 of 6</span>
-          <h1 className="onb-title">What type of coach are <span className="grad-text">you?</span></h1>
-          <p className="onb-sub">Pick the option which best describes you.</p>
-          <div className="onb-options">
-            {COACH_TYPES.map((t, i) => (
-              <OnbOption key={t} letter={LETTERS[i]} label={t} selected={a.coachType === t} onClick={() => setA({ ...a, coachType: t })} />
-            ))}
-          </div>
-          {a.coachType === OTHER && (
-            <input
-              className="onb-input onb-other"
-              type="text"
-              maxLength={80}
-              autoFocus
-              placeholder="Tell us what kind of coach you are"
-              value={a.coachTypeOther}
-              onChange={(e) => setA({ ...a, coachTypeOther: e.target.value })}
-            />
-          )}
-          {error && <p className="form-message error">{error}</p>}
-        </div>
-      </OnbFrame>
-    );
-  }
-
-  if (step === 6) {
-    return (
-      <OnbFrame step={6} footer={footerNav(() => save(7, { niche: a.niche.trim() }), 'Next', !a.niche.trim())}>
+      <OnbFrame step={shown(3)} total={total} footer={footerNav(saveProfileStep, 'Next', !nameReady || !linkReady, false)}>
         <div className="onb-center narrow">
-          <span className="onb-eyebrow">Question 2 of 6</span>
-          <h1 className="onb-title">What is your <span className="grad-text">coaching niche?</span></h1>
-          <p className="onb-sub">Who do you typically coach?</p>
-          <input
-            className="onb-input"
-            type="text"
-            maxLength={80}
-            placeholder="Type your answer..."
-            value={a.niche}
-            onChange={(e) => setA({ ...a, niche: e.target.value })}
-          />
-          {error && <p className="form-message error">{error}</p>}
-        </div>
-      </OnbFrame>
-    );
-  }
+          <span className="onb-eyebrow">Your profile</span>
+          <h1 className="onb-title">Set up your <span className="grad-text">workspace</span></h1>
+          <p className="onb-sub">Welcome, {firstName(name)}. Add a photo, name your workspace and choose the link clients will use to find you.</p>
 
-  if (step === 7) {
-    const goalsOk = a.goals.length > 0 && (!a.goals.includes(OTHER) || a.goalOther.trim());
-    return (
-      <OnbFrame
-        step={7}
-        footer={footerNav(
-          () => save(8, { goals: a.goals, goalOther: a.goals.includes(OTHER) ? a.goalOther.trim() : '' }),
-          'Next',
-          !goalsOk
-        )}
-      >
-        <div className="onb-center narrow">
-          <span className="onb-eyebrow">Question 3 of 6</span>
-          <h1 className="onb-title">What is your main goal <span className="grad-text">for the next 6 months?</span></h1>
-          <p className="onb-sub">Choose all which apply to you.</p>
-          <div className="onb-options">
-            {GOAL_OPTIONS.map((g) => (
-              <OnbOption key={g} label={g} selected={a.goals.includes(g)} onClick={() => setA({ ...a, goals: toggle(a.goals, g) })} />
-            ))}
-          </div>
-          {a.goals.includes(OTHER) && (
-            <input
-              className="onb-input onb-other"
-              type="text"
-              maxLength={120}
-              autoFocus
-              placeholder="Tell us your goal"
-              value={a.goalOther}
-              onChange={(e) => setA({ ...a, goalOther: e.target.value })}
-            />
-          )}
-          {error && <p className="form-message error">{error}</p>}
-        </div>
-      </OnbFrame>
-    );
-  }
-
-  if (step === 8) {
-    const toolsOk = a.tools.length > 0 && (!hasOtherTool || a.toolsOther.trim());
-    return (
-      <OnbFrame
-        step={8}
-        footer={footerNav(
-          () => save(9, { tools: a.tools, toolsOther: hasOtherTool ? a.toolsOther.trim() : '' }),
-          'Next',
-          !toolsOk
-        )}
-        wide
-      >
-        <div className="onb-center">
-          <span className="onb-eyebrow">Question 4 of 6</span>
-          <h1 className="onb-title">How are you currently running <span className="grad-text">your coaching business?</span></h1>
-          <p className="onb-sub">Let us know what tools you are using at the moment.</p>
-          {TOOL_GROUPS.map((group) => (
-            <div key={group.label} className="onb-tool-group">
-              <span className="onb-group-label">{group.label}</span>
-              <div className="onb-chips">
-                {group.items.map((item) => {
-                  const value = toolValue(group, item);
-                  const on = a.tools.includes(value);
-                  return (
-                    <button
-                      key={value}
-                      type="button"
-                      className={`onb-chip-pill ${on ? 'selected' : ''}`}
-                      aria-pressed={on}
-                      onClick={() => setA({ ...a, tools: toggle(a.tools, value) })}
-                    >
-                      {item}
-                    </button>
-                  );
-                })}
-              </div>
+          <div className="onb-avatar-row">
+            {a.photoUrl ? <img className="onb-avatar" src={a.photoUrl} alt="" /> : <span className="onb-avatar">{initialOf(name)}</span>}
+            <div>
+              <button type="button" className="btn-secondary" onClick={() => setPhotoMode(true)}>
+                <Icon name="camera" size={16} /> {a.photoUrl ? 'Change photo' : 'Add a photo'}
+              </button>
+              <small className="field-hint">Optional, but profiles with a photo get noticed more.</small>
             </div>
-          ))}
-          {hasOtherTool && (
-            <input
-              className="onb-input onb-other"
-              type="text"
-              maxLength={80}
-              autoFocus
-              placeholder="Which tool do you use?"
-              value={a.toolsOther}
-              onChange={(e) => setA({ ...a, toolsOther: e.target.value })}
-            />
-          )}
-          {error && <p className="form-message error">{error}</p>}
-        </div>
-      </OnbFrame>
-    );
-  }
-
-  if (step === 9) {
-    return (
-      <OnbFrame step={9} footer={footerNav(() => save(10, { clientBase: a.clientBase }), 'Continue', !a.clientBase)}>
-        <div className="onb-center narrow">
-          <span className="onb-eyebrow">Question 5 of 6</span>
-          <h1 className="onb-title">How many active clients <span className="grad-text">do you have?</span></h1>
-          <p className="onb-sub">This helps us set up your dashboard best for you.</p>
-          <div className="onb-options">
-            {CLIENT_BASE_OPTIONS.map((c, i) => (
-              <OnbOption key={c} letter={LETTERS[i]} label={c} selected={a.clientBase === c} onClick={() => setA({ ...a, clientBase: c })} />
-            ))}
           </div>
-          {error && <p className="form-message error">{error}</p>}
-        </div>
-      </OnbFrame>
-    );
-  }
-
-  // Step 10: name the workspace and choose the invite link (required, never filled in for the coach)
-  const host = window.location.host;
-  const linkValue = slugify(a.slug);
-  const linkReady = SLUG_PATTERN.test(linkValue);
-  const nameReady = a.workspaceName.trim().length >= 2;
-  const displayName = a.workspaceName.trim() || 'Your business name';
-  const sampleLink = `${host}/@${linkReady ? linkValue : 'your-link'}`;
-  return (
-    <OnbFrame
-      step={10}
-      footer={
-        <div className="onb-nav">
-          <button className="btn-back icon-text" onClick={back} disabled={busy}>
-            <Icon name="back" size={16} /> Back
-          </button>
-          <button className="btn-primary onb-next" onClick={finish} disabled={busy || !nameReady || !linkReady}>
-            {busy ? 'Finishing...' : 'Finish setup'} <Icon name="expand" size={16} />
-          </button>
-        </div>
-      }
-    >
-      <div className="onb-split">
-        <div className="onb-split-text">
-          <span className="onb-eyebrow">Workspace setup</span>
-          <h1>Name your <span className="grad-text">workspace.</span></h1>
-          <p className="onb-sub">This is your home on BodUp. Clients use your invite link to find you.</p>
 
           <div className="onb-field">
             <label>Workspace name</label>
@@ -3687,43 +3714,708 @@ function OnboardingFlow({ user, startStep, startAnswers, onFinished, onStartOver
             )}
             <small className="field-hint">Letters, numbers and dashes. Pick one you can share with clients.</small>
           </div>
-
           {error && <p className="form-message error">{error}</p>}
         </div>
+      </OnbFrame>
+    );
+  }
 
-        <div className="onb-split-art" aria-hidden="true">
-          <div className="share-mock">
-            <div className="chat-card">
-              <div className="chat-head">
-                <span className="workspace-avatar sm">{initialOf(displayName)}</span>
-                <div>
-                  <strong>{displayName}</strong>
-                  <small>online</small>
-                </div>
-              </div>
-              <div className="chat-body">
-                <div className="bubble in">
-                  Hi Anna, I have set up my coaching space. Join me here: <span className="bubble-link">{sampleLink}</span>
-                </div>
-                <div className="bubble out">Thank you, joining now!</div>
-              </div>
-            </div>
+  // ---- Step 4: your coaching (the five questions on one screen) ----
+  if (step === 4) {
+    const typeOk = a.coachType && (a.coachType !== OTHER || a.coachTypeOther.trim());
+    const goalsOk = a.goals.length > 0 && (!a.goals.includes(OTHER) || a.goalOther.trim());
+    const toolsOk = a.tools.length > 0 && (!hasOtherTool || a.toolsOther.trim());
+    const ready = typeOk && a.niche.trim() && goalsOk && toolsOk && a.clientBase;
+    return (
+      <OnbFrame
+        step={shown(4)}
+        total={total}
+        wide
+        footer={footerNav(
+          () =>
+            save(5, {
+              coachTypeOther: a.coachType === OTHER ? a.coachTypeOther.trim() : '',
+              niche: a.niche.trim(),
+              goalOther: a.goals.includes(OTHER) ? a.goalOther.trim() : '',
+              toolsOther: hasOtherTool ? a.toolsOther.trim() : ''
+            }),
+          'Next',
+          !ready
+        )}
+      >
+        <div className="onb-center">
+          <span className="onb-eyebrow">Your coaching</span>
+          <h1 className="onb-title">Tell us about <span className="grad-text">your business</span></h1>
+          <p className="onb-sub">Five quick questions. They help us set up your dashboard.</p>
 
-            <div className="mail-card">
-              <div className="mail-top">
-                <span className="mail-logo">M</span>
-                <div>
-                  <strong>{displayName}</strong>
-                  <small>to me</small>
+          <div className="onb-section">
+            <h3>What type of coach are you?</h3>
+            <ChipGroup options={COACH_TYPES} selected={a.coachType} onPick={(v) => setA({ ...a, coachType: v })} />
+            {a.coachType === OTHER && (
+              <input
+                className="onb-input onb-other"
+                type="text"
+                maxLength={80}
+                placeholder="Tell us what kind of coach you are"
+                value={a.coachTypeOther}
+                onChange={(e) => setA({ ...a, coachTypeOther: e.target.value })}
+              />
+            )}
+          </div>
+
+          <div className="onb-section">
+            <h3>What is your coaching niche?</h3>
+            <input
+              className="onb-input"
+              type="text"
+              maxLength={80}
+              placeholder="Who do you typically coach?"
+              value={a.niche}
+              onChange={(e) => setA({ ...a, niche: e.target.value })}
+            />
+          </div>
+
+          <div className="onb-section">
+            <h3>Your main goals for the next 6 months <small>(choose all that apply)</small></h3>
+            <ChipGroup options={GOAL_OPTIONS} selected={a.goals} onPick={(v) => setA({ ...a, goals: toggle(a.goals, v) })} />
+            {a.goals.includes(OTHER) && (
+              <input
+                className="onb-input onb-other"
+                type="text"
+                maxLength={120}
+                placeholder="Tell us your goal"
+                value={a.goalOther}
+                onChange={(e) => setA({ ...a, goalOther: e.target.value })}
+              />
+            )}
+          </div>
+
+          <div className="onb-section">
+            <h3>Which tools do you use today?</h3>
+            {TOOL_GROUPS.map((group) => (
+              <div key={group.label} className="onb-tool-group">
+                <span className="onb-group-label">{group.label}</span>
+                <div className="onb-chips">
+                  {group.items.map((item) => {
+                    const value = toolValue(group, item);
+                    const on = a.tools.includes(value);
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        className={`onb-chip-pill ${on ? 'selected' : ''}`}
+                        aria-pressed={on}
+                        onClick={() => setA({ ...a, tools: toggle(a.tools, value) })}
+                      >
+                        {item}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
-              <p className="mail-subject">Your invite to {displayName}</p>
-              <p className="mail-snippet">
-                Welcome aboard. Open <span className="bubble-link">{sampleLink}</span> to join your coaching space.
-              </p>
-            </div>
+            ))}
+            {hasOtherTool && (
+              <input
+                className="onb-input onb-other"
+                type="text"
+                maxLength={80}
+                placeholder="Which tool do you use?"
+                value={a.toolsOther}
+                onChange={(e) => setA({ ...a, toolsOther: e.target.value })}
+              />
+            )}
+          </div>
+
+          <div className="onb-section">
+            <h3>How many active clients do you have?</h3>
+            <ChipGroup options={CLIENT_BASE_OPTIONS} selected={a.clientBase} onPick={(v) => setA({ ...a, clientBase: v })} />
+          </div>
+          {error && <p className="form-message error">{error}</p>}
+        </div>
+      </OnbFrame>
+    );
+  }
+
+  // ---- Step 5: marketplace profile ----
+  if (step === 5) {
+    const langOk = a.languages.length > 0 && (!a.languages.includes(OTHER) || a.languageOther.trim());
+    const educateOk = !a.educates.includes(OTHER) || a.educateOther.trim();
+    const ready =
+      a.headline.trim().length >= 5 &&
+      a.bio.trim().length >= 30 &&
+      a.specialties.length > 0 &&
+      langOk &&
+      educateOk &&
+      a.mode &&
+      a.experience;
+    return (
+      <OnbFrame
+        step={shown(5)}
+        total={total}
+        wide
+        footer={footerNav(
+          () =>
+            save(6, {
+              headline: a.headline.trim(),
+              bio: a.bio.trim(),
+              languageOther: a.languages.includes(OTHER) ? a.languageOther.trim() : '',
+              educateOther: a.educates.includes(OTHER) ? a.educateOther.trim() : ''
+            }),
+          'Next',
+          !ready
+        )}
+      >
+        <div className="onb-center">
+          <span className="onb-eyebrow">Marketplace profile</span>
+          <h1 className="onb-title">Show trainees <span className="grad-text">what you do best</span></h1>
+          <p className="onb-sub">
+            Trainees search the BodUp marketplace by category. A clear headline, a short story and a few specialties help the right people find you.
+          </p>
+
+          <div className="onb-section">
+            <h3>What are you specialised in? <small>(choose all that apply)</small></h3>
+            <ChipGroup options={MARKET_CATEGORIES} selected={a.specialties} onPick={(v) => setA({ ...a, specialties: toggle(a.specialties, v) })} />
+          </div>
+
+          <div className="onb-field">
+            <label>Headline</label>
+            <input
+              type="text"
+              maxLength={80}
+              placeholder="For example: Strength and nutrition coach for busy parents"
+              value={a.headline}
+              onChange={(e) => setA({ ...a, headline: e.target.value })}
+            />
+          </div>
+
+          <div className="onb-field">
+            <label>About you</label>
+            <textarea
+              rows={5}
+              maxLength={600}
+              placeholder="Your background, who you help and how you work with clients (at least 30 characters)."
+              value={a.bio}
+              onChange={(e) => setA({ ...a, bio: e.target.value })}
+            />
+            <small className="field-hint">{a.bio.length} / 600</small>
+          </div>
+
+          <div className="onb-section">
+            <h3>Do you also educate on other topics? <small>(optional, helps your visibility)</small></h3>
+            <ChipGroup options={EDUCATE_TOPICS} selected={a.educates} onPick={(v) => setA({ ...a, educates: toggle(a.educates, v) })} />
+            {a.educates.includes(OTHER) && (
+              <input
+                className="onb-input onb-other"
+                type="text"
+                maxLength={80}
+                placeholder="Which topic?"
+                value={a.educateOther}
+                onChange={(e) => setA({ ...a, educateOther: e.target.value })}
+              />
+            )}
+          </div>
+
+          <div className="onb-section">
+            <h3>Languages you coach in</h3>
+            <ChipGroup options={COACH_LANGUAGES} selected={a.languages} onPick={(v) => setA({ ...a, languages: toggle(a.languages, v) })} />
+            {a.languages.includes(OTHER) && (
+              <input
+                className="onb-input onb-other"
+                type="text"
+                maxLength={60}
+                placeholder="Which language?"
+                value={a.languageOther}
+                onChange={(e) => setA({ ...a, languageOther: e.target.value })}
+              />
+            )}
+          </div>
+
+          <div className="onb-section">
+            <h3>How do you coach?</h3>
+            <ChipGroup options={COACH_MODES} selected={a.mode} onPick={(v) => setA({ ...a, mode: v })} />
+          </div>
+
+          <div className="onb-section">
+            <h3>Years of coaching experience</h3>
+            <ChipGroup options={EXPERIENCE_YEARS} selected={a.experience} onPick={(v) => setA({ ...a, experience: v })} />
+          </div>
+          {error && <p className="form-message error">{error}</p>}
+        </div>
+      </OnbFrame>
+    );
+  }
+
+  // ---- Step 6: pricing and publish ----
+  const consult = num(a.consultPrice);
+  const monthly = num(a.monthlyPrice);
+  const pricesFilled = a.consultPrice !== '' && a.monthlyPrice !== '' && !Number.isNaN(consult) && !Number.isNaN(monthly);
+  return (
+    <OnbFrame
+      step={shown(6)}
+      total={total}
+      footer={
+        <div className="onb-nav">
+          <button className="btn-back icon-text" onClick={back} disabled={busy}>
+            <Icon name="back" size={16} /> Back
+          </button>
+          <button className="btn-primary onb-next" onClick={finish} disabled={busy || !pricesFilled}>
+            {busy ? 'Finishing...' : 'Finish setup'} <Icon name="expand" size={16} />
+          </button>
+        </div>
+      }
+    >
+      <div className="onb-center narrow">
+        <span className="onb-eyebrow">Pricing and publishing</span>
+        <h1 className="onb-title">Set <span className="grad-text">your prices</span></h1>
+        <p className="onb-sub">You decide what you charge. You can change your prices at any time.</p>
+
+        <div className="onb-two">
+          <div className="onb-field">
+            <label>Consultation price (EUR)</label>
+            <input
+              type="number"
+              min="0"
+              max="1000"
+              step="1"
+              placeholder="For example 30"
+              value={a.consultPrice}
+              onChange={(e) => setA({ ...a, consultPrice: e.target.value })}
+            />
+          </div>
+          <div className="onb-field">
+            <label>Length of a consultation</label>
+            <select value={a.consultMinutes} onChange={(e) => setA({ ...a, consultMinutes: e.target.value })}>
+              <option value="30">30 minutes</option>
+              <option value="45">45 minutes</option>
+              <option value="60">60 minutes</option>
+            </select>
           </div>
         </div>
+        <small className="field-hint">Use 0 for a free intro call.</small>
+
+        <div className="onb-field">
+          <label>Monthly coaching price (EUR per month)</label>
+          <input
+            type="number"
+            min="0"
+            max="5000"
+            step="1"
+            placeholder="For example 120"
+            value={a.monthlyPrice}
+            onChange={(e) => setA({ ...a, monthlyPrice: e.target.value })}
+          />
+        </div>
+
+        <div className="onb-fee">
+          <strong>BodUp keeps {feePercentText} of each payment.</strong>
+          {pricesFilled && (monthly > 0 || consult > 0) ? (
+            <ul>
+              {consult > 0 && <li>A {euro(consult)} consultation pays you {euro(afterFee(consult))}.</li>}
+              {monthly > 0 && <li>A {euro(monthly)} monthly plan pays you {euro(afterFee(monthly))} per month.</li>}
+            </ul>
+          ) : (
+            <p>Enter your prices to see what you receive.</p>
+          )}
+          <small>Payment processing fees are also taken from your share. Payments run in demo mode while we finish setting up real payouts.</small>
+        </div>
+
+        <div className="onb-section">
+          <h3>Marketplace visibility</h3>
+          <div className="onb-options">
+            <OnbOption letter="A" label="Submit my profile to the marketplace now" selected={a.submitNow} onClick={() => setA({ ...a, submitNow: true })} />
+            <OnbOption letter="B" label="Keep my profile private for now" selected={!a.submitNow} onClick={() => setA({ ...a, submitNow: false })} />
+          </div>
+          <small className="field-hint">
+            {a.submitNow
+              ? 'Your profile will show as pending until BodUp staff review it. This usually takes no longer than 1 working day.'
+              : 'You can submit your profile for review later from your dashboard.'}
+          </small>
+        </div>
+        {error && <p className="form-message error">{error}</p>}
+      </div>
+    </OnbFrame>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Trainee onboarding. Steps: 1 account, 2 confirm email, 3 about you, 4 lifestyle,
+// 5 your goals, 6 preferences. The answers fill the same profile the client portal already uses.
+// ---------------------------------------------------------------------------
+function TraineeOnboarding({ user, startStep, startAnswers, onFinished, onStartOver }) {
+  const viaGoogle = isGoogleUser(user);
+  const total = viaGoogle ? 5 : 6;
+  const shown = (s) => (viaGoogle && s > 2 ? s - 1 : s);
+  const firstStep = viaGoogle ? 3 : 2;
+  const [step, setStep] = useState(Math.min(6, Math.max(firstStep, startStep || firstStep)));
+  const [a, setA] = useState({
+    dateOfBirth: '',
+    sex: '',
+    height: '',
+    weight: '',
+    targetWeight: '',
+    activityLevel: '',
+    water: '',
+    steps: '',
+    gymChoice: '',
+    gymOther: '',
+    focus: [],
+    mainGoal: '',
+    experience: '',
+    healthNotes: '',
+    language: '',
+    budget: '',
+    style: '',
+    inviteCode: '',
+    ...(startAnswers || {})
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const name = user.displayName || '';
+
+  const maxDob = (() => {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() - 18);
+    return toDateKey(d);
+  })();
+
+  // Saves progress (without the health notes, which only go to the profile)
+  const save = async (nextStep, patch = {}) => {
+    setBusy(true);
+    setError('');
+    try {
+      const next = { ...a, ...patch };
+      const { healthNotes, ...safe } = next;
+      await setDoc(
+        doc(db, 'users', user.uid),
+        { onboardingStep: nextStep, onboarding: { ...safe, inviteCode: '' }, lastUpdated: serverTimestamp() },
+        { merge: true }
+      );
+      setA(next);
+      setStep(nextStep);
+      return true;
+    } catch (err) {
+      setError('Could not save. Check your connection and try again.');
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const back = () => {
+    setError('');
+    setStep(Math.max(3, step - 1));
+  };
+  const toggle = (list, value) => (list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
+
+  const footerNav = (onNext, nextLabel, nextDisabled, backAllowed = true) => (
+    <div className="onb-nav">
+      {backAllowed ? (
+        <button className="btn-back icon-text" onClick={back} disabled={busy}>
+          <Icon name="back" size={16} /> Back
+        </button>
+      ) : <span />}
+      <button className="btn-primary onb-next" onClick={onNext} disabled={busy || nextDisabled}>
+        {busy ? 'Saving...' : nextLabel} <Icon name="expand" size={16} />
+      </button>
+    </div>
+  );
+
+  const finish = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      // An invite code is optional. It connects the trainee to the coach who invited them.
+      const code = a.inviteCode.trim();
+      if (code) {
+        const refDocs = await getDocs(query(collection(db, 'referrals'), where('referralCode', '==', code)));
+        if (refDocs.empty) {
+          setError('We could not find that invite code. Check it, or clear the field to continue without one.');
+          setBusy(false);
+          return;
+        }
+        const referralDoc = refDocs.docs[0];
+        const referral = referralDoc.data();
+        let alreadyMine = false;
+        if (referral.status !== 'pending') {
+          const clientSnap = await getDoc(doc(db, 'clients', referral.clientId));
+          alreadyMine = clientSnap.exists() && clientSnap.data().userId === user.uid;
+          if (!alreadyMine) {
+            setError('That invite code has already been used. Clear the field to continue without one.');
+            setBusy(false);
+            return;
+          }
+        }
+        if (!alreadyMine) {
+          await updateDoc(doc(db, 'clients', referral.clientId), {
+            userId: user.uid,
+            email: user.email || '',
+            status: 'active',
+            acceptedAt: serverTimestamp()
+          });
+          await updateDoc(doc(db, 'referrals', referralDoc.id), { status: 'accepted', acceptedAt: serverTimestamp() });
+        }
+      }
+
+      const activity = ACTIVITY_OPTIONS.find((o) => o.value === a.activityLevel);
+      const stepsValue = num(a.steps) > 0 ? Math.round(num(a.steps)) : activity ? activity.steps : 6000;
+      const gym = a.gymChoice === 'Other' ? a.gymOther.trim() : a.gymChoice;
+      const profileFields = {
+        dateOfBirth: a.dateOfBirth,
+        age: ageFromDob(a.dateOfBirth),
+        sex: a.sex,
+        height: num(a.height),
+        weight: num(a.weight),
+        targetWeight: num(a.targetWeight),
+        activityLevel: a.activityLevel,
+        steps: stepsValue,
+        water: num(a.water),
+        gymChoice: a.gymChoice,
+        gym,
+        focus: a.focus,
+        mainGoal: a.mainGoal,
+        experience: a.experience,
+        healthNotes: a.healthNotes.trim(),
+        preferredLanguage: a.language,
+        budget: a.budget,
+        coachingStyle: a.style
+      };
+      await setDoc(
+        doc(db, 'profiles', user.uid),
+        { ...profileFields, lastUpdated: serverTimestamp(), createdAt: serverTimestamp() },
+        { merge: true }
+      );
+      const { healthNotes, ...safe } = a;
+      await setDoc(
+        doc(db, 'users', user.uid),
+        {
+          onboarding: { ...safe, inviteCode: '' },
+          interests: a.focus,
+          onboardingStep: 6,
+          onboardingComplete: true,
+          completedAt: serverTimestamp()
+        },
+        { merge: true }
+      );
+      onFinished(profileFields);
+    } catch (err) {
+      console.error('Trainee setup failed:', err);
+      setError('Could not finish setup. Try again.');
+      setBusy(false);
+    }
+  };
+
+  // ---- Step 2: confirm email ----
+  if (step === 2) {
+    return <VerifyStep user={user} step={2} total={total} onVerified={() => save(3)} onStartOver={onStartOver} />;
+  }
+
+  // ---- Step 3: about you ----
+  if (step === 3) {
+    const age = a.dateOfBirth ? ageFromDob(a.dateOfBirth) : 0;
+    const h = num(a.height);
+    const w = num(a.weight);
+    const t = num(a.targetWeight);
+    const ready = age >= 18 && a.sex && h >= 100 && h <= 250 && w >= 30 && w <= 300 && t >= 30 && t <= 300;
+    return (
+      <OnbFrame step={shown(3)} total={total} footer={footerNav(() => save(4), 'Next', !ready, false)}>
+        <div className="onb-center narrow">
+          <span className="onb-eyebrow">About you</span>
+          <h1 className="onb-title">Let us get to <span className="grad-text">know you</span></h1>
+          <p className="onb-sub">Welcome, {firstName(name)}. These basics set up your progress tracking, so you only enter them once.</p>
+
+          <div className="onb-field">
+            <label>Date of birth</label>
+            <input type="date" max={maxDob} value={a.dateOfBirth} onChange={(e) => setA({ ...a, dateOfBirth: e.target.value })} />
+            <small className="field-hint">BodUp is for people aged 18 and over.</small>
+          </div>
+
+          <div className="onb-section">
+            <h3>Sex</h3>
+            <ChipGroup
+              options={['Male', 'Female', 'Other']}
+              selected={a.sex === 'M' ? 'Male' : a.sex === 'F' ? 'Female' : a.sex}
+              onPick={(v) => setA({ ...a, sex: v === 'Male' ? 'M' : v === 'Female' ? 'F' : 'Other' })}
+            />
+          </div>
+
+          <div className="onb-two">
+            <div className="onb-field">
+              <label>Height (cm)</label>
+              <input type="number" min="100" max="250" placeholder="175" value={a.height} onChange={(e) => setA({ ...a, height: e.target.value })} />
+            </div>
+            <div className="onb-field">
+              <label>Current weight (kg)</label>
+              <input type="number" min="30" max="300" step="0.1" placeholder="75" value={a.weight} onChange={(e) => setA({ ...a, weight: e.target.value })} />
+            </div>
+          </div>
+          <div className="onb-field">
+            <label>Goal weight (kg)</label>
+            <input type="number" min="30" max="300" step="0.1" placeholder="70" value={a.targetWeight} onChange={(e) => setA({ ...a, targetWeight: e.target.value })} />
+          </div>
+          {error && <p className="form-message error">{error}</p>}
+        </div>
+      </OnbFrame>
+    );
+  }
+
+  // ---- Step 4: lifestyle ----
+  if (step === 4) {
+    const water = num(a.water);
+    const ready = a.activityLevel && water >= 0 && water <= 10 && a.water !== '' && (a.gymChoice !== 'Other' || a.gymOther.trim());
+    return (
+      <OnbFrame step={shown(4)} total={total} footer={footerNav(() => save(5), 'Next', !ready)}>
+        <div className="onb-center narrow">
+          <span className="onb-eyebrow">Your lifestyle</span>
+          <h1 className="onb-title">How active are <span className="grad-text">you today?</span></h1>
+          <p className="onb-sub">An honest starting point is the best one. You can update it any time.</p>
+
+          <div className="onb-options">
+            {ACTIVITY_OPTIONS.map((o, i) => (
+              <OnbOption key={o.value} letter={LETTERS[i]} label={o.label} selected={a.activityLevel === o.value} onClick={() => setA({ ...a, activityLevel: o.value })} />
+            ))}
+          </div>
+
+          <div className="onb-field">
+            <label>Water you drink on a normal day (litres)</label>
+            <input type="number" min="0" max="10" step="0.5" placeholder="2" value={a.water} onChange={(e) => setA({ ...a, water: e.target.value })} />
+            <div className="onb-chips">
+              {[1, 1.5, 2, 2.5, 3].map((v) => (
+                <button key={v} type="button" className={`onb-chip-pill ${num(a.water) === v ? 'selected' : ''}`} onClick={() => setA({ ...a, water: String(v) })}>
+                  {v} L
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="onb-two">
+            <div className="onb-field">
+              <label>Daily steps (optional)</label>
+              <input type="number" min="0" placeholder="An estimate is fine" value={a.steps} onChange={(e) => setA({ ...a, steps: e.target.value })} />
+            </div>
+            <div className="onb-field">
+              <label>Your gym (optional)</label>
+              <select value={a.gymChoice} onChange={(e) => setA({ ...a, gymChoice: e.target.value })}>
+                <option value="">Select your gym...</option>
+                {GYMS.map((g) => (
+                  <option key={g} value={g}>{g}</option>
+                ))}
+                <option value="Other">Other</option>
+              </select>
+            </div>
+          </div>
+          {a.gymChoice === 'Other' && (
+            <input
+              className="onb-input onb-other"
+              type="text"
+              maxLength={60}
+              placeholder="Type the name of your gym"
+              value={a.gymOther}
+              onChange={(e) => setA({ ...a, gymOther: e.target.value })}
+            />
+          )}
+          {error && <p className="form-message error">{error}</p>}
+        </div>
+      </OnbFrame>
+    );
+  }
+
+  // ---- Step 5: goals ----
+  if (step === 5) {
+    const ready = a.focus.length > 0 && a.mainGoal && a.experience;
+    return (
+      <OnbFrame step={shown(5)} total={total} footer={footerNav(() => save(6, { healthNotes: a.healthNotes.trim() }), 'Next', !ready)}>
+        <div className="onb-center narrow">
+          <span className="onb-eyebrow">Your goals</span>
+          <h1 className="onb-title">What do you want <span className="grad-text">help with?</span></h1>
+          <p className="onb-sub">We use this to suggest coaches who fit what you need.</p>
+
+          <div className="onb-section">
+            <h3>I want help with <small>(choose all that apply)</small></h3>
+            <ChipGroup options={MARKET_CATEGORIES} selected={a.focus} onPick={(v) => setA({ ...a, focus: toggle(a.focus, v) })} />
+          </div>
+
+          <div className="onb-section">
+            <h3>My main goal</h3>
+            <div className="onb-options">
+              {MAIN_GOALS.map((g, i) => (
+                <OnbOption key={g} letter={LETTERS[i]} label={g} selected={a.mainGoal === g} onClick={() => setA({ ...a, mainGoal: g })} />
+              ))}
+            </div>
+          </div>
+
+          <div className="onb-section">
+            <h3>My experience level</h3>
+            <ChipGroup options={TRAINEE_LEVELS} selected={a.experience} onPick={(v) => setA({ ...a, experience: v })} />
+          </div>
+
+          <div className="onb-field">
+            <label>Anything your coach should know? (optional)</label>
+            <textarea
+              rows={3}
+              maxLength={400}
+              placeholder="Injuries, health conditions or food allergies. This is shared only with your coach."
+              value={a.healthNotes}
+              onChange={(e) => setA({ ...a, healthNotes: e.target.value })}
+            />
+          </div>
+          {error && <p className="form-message error">{error}</p>}
+        </div>
+      </OnbFrame>
+    );
+  }
+
+  // ---- Step 6: preferences and finish ----
+  const ready = a.language && a.budget && a.style;
+  return (
+    <OnbFrame
+      step={shown(6)}
+      total={total}
+      footer={
+        <div className="onb-nav">
+          <button className="btn-back icon-text" onClick={back} disabled={busy}>
+            <Icon name="back" size={16} /> Back
+          </button>
+          <button className="btn-primary onb-next" onClick={finish} disabled={busy || !ready}>
+            {busy ? 'Finishing...' : 'Finish setup'} <Icon name="expand" size={16} />
+          </button>
+        </div>
+      }
+    >
+      <div className="onb-center narrow">
+        <span className="onb-eyebrow">Your preferences</span>
+        <h1 className="onb-title">How would you like to <span className="grad-text">be coached?</span></h1>
+        <p className="onb-sub">Almost there. Your dashboard is ready as soon as you finish.</p>
+
+        <div className="onb-section">
+          <h3>Preferred language</h3>
+          <ChipGroup options={TRAINEE_LANGUAGES} selected={a.language} onPick={(v) => setA({ ...a, language: v })} />
+        </div>
+
+        <div className="onb-section">
+          <h3>Monthly budget for coaching</h3>
+          <ChipGroup options={BUDGET_OPTIONS} selected={a.budget} onPick={(v) => setA({ ...a, budget: v })} />
+        </div>
+
+        <div className="onb-section">
+          <h3>Coaching style</h3>
+          <div className="onb-options">
+            {STYLE_OPTIONS.map((s, i) => (
+              <OnbOption key={s} letter={LETTERS[i]} label={s} selected={a.style === s} onClick={() => setA({ ...a, style: s })} />
+            ))}
+          </div>
+        </div>
+
+        <div className="onb-field">
+          <label>Invite code from a coach (optional)</label>
+          <input
+            type="text"
+            placeholder="Leave empty if you do not have one"
+            value={a.inviteCode}
+            onChange={(e) => setA({ ...a, inviteCode: e.target.value })}
+          />
+          <small className="field-hint">Already working with a coach? Enter the code they sent you. Otherwise use Find your coach after setup.</small>
+        </div>
+        {error && <p className="form-message error">{error}</p>}
       </div>
     </OnbFrame>
   );
@@ -5276,6 +5968,8 @@ function App() {
   // Invite code flow state
   const [showInviteCodeInput, setShowInviteCodeInput] = useState(false);
   const [authView, setAuthView] = useState('landing');
+  const [registerRole, setRegisterRole] = useState(null);
+  const [registerNotice, setRegisterNotice] = useState('');
   const [onboardingComplete, setOnboardingComplete] = useState(null);
   const [onboardingStep, setOnboardingStep] = useState(2);
   const [onboardingData, setOnboardingData] = useState({});
@@ -5478,11 +6172,38 @@ function App() {
       const googleUser = result.user;
 
       const userDoc = await getDoc(doc(db, 'users', googleUser.uid));
-      
+
       if (!userDoc.exists()) {
         if (await checkIsAdmin()) {
           setIsAdmin(true);
           setUserRole('admin');
+          return;
+        }
+        // Signing in with Google without an account: ask which type of account they want
+        if (!registerRole) {
+          await signOut(auth);
+          setRegisterNotice('We could not find a BodUp account for that Google profile. Choose how you want to join to create one.');
+          setAuthView('register');
+          return;
+        }
+        if (registerRole === 'trainee') {
+          await setDoc(doc(db, 'users', googleUser.uid), {
+            email: googleUser.email,
+            displayName: googleUser.displayName,
+            role: 'client',
+            accountType: 'trainee',
+            status: 'active',
+            onboardingComplete: false,
+            onboardingStep: 3,
+            onboarding: {},
+            traineeSince: serverTimestamp(),
+            createdAt: serverTimestamp()
+          });
+          setCoachProfile({ displayName: googleUser.displayName, role: 'client' });
+          setOnboardingComplete(false);
+          setOnboardingStep(3);
+          setOnboardingData({});
+          setUserRole('client');
           return;
         }
         await setDoc(doc(db, 'users', googleUser.uid), {
@@ -5491,7 +6212,7 @@ function App() {
           role: 'coach',
           status: 'active',
           onboardingComplete: false,
-          onboardingStep: 4,
+          onboardingStep: 3,
           onboarding: {},
           createdAt: serverTimestamp()
         });
@@ -5504,7 +6225,7 @@ function App() {
         });
 
         setOnboardingComplete(false);
-        setOnboardingStep(4);
+        setOnboardingStep(3);
         setOnboardingData({});
         setUserRole('coach');
       }
@@ -5544,6 +6265,8 @@ function App() {
       setShowInviteCodeInput(false);
       setInviteCodeInput('');
       setAuthView('landing');
+      setRegisterRole(null);
+      setRegisterNotice('');
       setOnboardingComplete(null);
       setOnboardingStep(2);
       setOnboardingData({});
@@ -5819,12 +6542,12 @@ function App() {
     document.title = 'BodUp';
   }, []);
 
-  const handleAccountCreated = ({ name }) => {
-    setCoachProfile({ displayName: name });
+  const handleAccountCreated = ({ name, role }) => {
+    setCoachProfile({ displayName: name, role });
     setOnboardingComplete(false);
     setOnboardingStep(2);
     setOnboardingData({});
-    setUserRole('coach');
+    setUserRole(role === 'client' ? 'client' : 'coach');
   };
 
   // Removes an account that is being started again (for example a wrong email)
@@ -5834,13 +6557,17 @@ function App() {
       if (current) {
         await deleteDoc(doc(db, 'users', current.uid)).catch(() => {});
         await deleteDoc(doc(db, 'coaches', current.uid)).catch(() => {});
+        await deleteDoc(doc(db, 'profiles', current.uid)).catch(() => {});
+        await deleteDoc(doc(db, 'coachProfiles', current.uid)).catch(() => {});
         await deleteUser(current);
       }
     } catch (err) {
       console.error('Could not remove the account:', err);
       setLoginNotice('We could not remove that account. Contact the BodUp admin.');
     }
+    const keepRole = registerRole;
     await handleSignOut();
+    setRegisterRole(keepRole);
     setAuthView('register');
   };
 
@@ -6685,15 +7412,49 @@ function App() {
           language={language}
           onLanguage={setLanguage}
           onLogin={() => setAuthView('login')}
-          onRegister={() => setAuthView('register')}
+          onRegister={() => {
+            setRegisterRole(null);
+            setAuthView('register');
+          }}
+          onRegisterCoach={() => {
+            setRegisterRole('coach');
+            setAuthView('register');
+          }}
+        />
+      );
+    }
+    if (authView === 'register' && !loginNotice && !registerRole) {
+      return (
+        <AccountTypeStep
+          notice={registerNotice}
+          onChoose={(role) => {
+            setRegisterNotice('');
+            setRegisterRole(role);
+          }}
+          onBack={() => {
+            setRegisterNotice('');
+            setAuthView('landing');
+          }}
+          onSignIn={() => {
+            setRegisterNotice('');
+            setAuthView('login');
+          }}
         />
       );
     }
     if (authView === 'register' && !loginNotice) {
       return (
         <AccountStep
-          onBack={() => setAuthView('landing')}
-          onSignIn={() => setAuthView('login')}
+          role={registerRole}
+          onChangeType={() => setRegisterRole(null)}
+          onBack={() => {
+            setRegisterRole(null);
+            setAuthView('landing');
+          }}
+          onSignIn={() => {
+            setRegisterRole(null);
+            setAuthView('login');
+          }}
           onGoogle={handleGoogleSignIn}
           onCreated={handleAccountCreated}
           onInviteCode={() => {
@@ -6707,16 +7468,19 @@ function App() {
     return (
       <div className="login-container">
         <div className="login-card">
-          <button
-            className="btn-back icon-text"
-            onClick={() => {
-              setLoginNotice('');
-              setShowInviteCodeInput(false);
-              setAuthView('landing');
-            }}
-          >
-            <Icon name="back" size={16} /> Back to home
-          </button>
+          <div className="btn-home-wrap top">
+            <button
+              type="button"
+              className="btn-home"
+              onClick={() => {
+                setLoginNotice('');
+                setShowInviteCodeInput(false);
+                setAuthView('landing');
+              }}
+            >
+              <Icon name="back" size={16} /> Back to home
+            </button>
+          </div>
           <BrandMark size={44} className="auth-brand" />
           <h1 className="login-title">Welcome back</h1>
           {loginNotice && <p className="login-notice">{loginNotice}</p>}
@@ -6732,7 +7496,7 @@ function App() {
             Continue with Google
           </button>
           <p className="onb-switch">
-            New to BodUp? <button className="link-btn" onClick={() => setAuthView('register')}>Create an account</button>
+            New to BodUp? <button className="link-btn" onClick={() => { setRegisterRole(null); setAuthView('register'); }}>Create an account</button>
           </p>
           <p className="login-client">
             Client? <button type="button" className="link-btn" onClick={() => setShowInviteCodeInput(!showInviteCodeInput)}>Join with an invite code</button>
@@ -6879,6 +7643,22 @@ function App() {
         startStep={onboardingStep}
         startAnswers={onboardingData}
         onFinished={() => loadUserData(user.uid)}
+        onStartOver={handleStartOver}
+      />
+    );
+  }
+
+  if (userRole === 'client' && onboardingComplete === false) {
+    return (
+      <TraineeOnboarding
+        key={user.uid}
+        user={user}
+        startStep={onboardingStep}
+        startAnswers={onboardingData}
+        onFinished={(finishedProfile) => {
+          if (finishedProfile) setProfile(finishedProfile);
+          loadUserData(user.uid);
+        }}
         onStartOver={handleStartOver}
       />
     );
